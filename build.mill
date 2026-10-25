@@ -1,0 +1,127 @@
+//| mill-version: 1.3.1
+package build
+
+import mill.*
+import mill.scalalib.*
+
+// Version constants — keep in sync with project/Dependencies.scala
+object V {
+  val scala      = "3.10.0"
+  val scalaSpark = "3.7.4" // scala-steward:off — last Scala 3 on the 2.13 stdlib that Spark 4.x links against
+  val zio        = "2.1.27"
+  val zioConfig  = "4.1.0"
+  val zioKafka   = "3.8.1"
+  val zioHttp    = "3.11.6"
+  val zioRedis   = "1.3.0"
+  val zioJson    = "1.1.1"
+  val zioLogging = "2.5.3"
+  val quill      = "4.8.6"
+  val postgres   = "42.7.14"
+  val hikari     = "7.1.0"
+  val flyway     = "13.11.1"
+  val logback    = "1.6.6"
+  val chimney    = "2.1.0"
+  val spark      = "4.2.0"
+  val testcont   = "2.0.5"
+}
+
+// sbt/Maven directory layout (src/main/scala, src/test/scala), shared with the sbt build
+trait MepModule extends SbtModule {
+  def scalaVersion = V.scala
+  def scalacOptions = Seq(
+    "-deprecation",
+    "-feature",
+    "-unchecked",
+    "-Werror",
+    "-Wunused:all",
+    "-Wvalue-discard",
+    "-Wnonunit-statement"
+  )
+  // Scala's LazyVals still touches sun.misc.Unsafe; silence the JDK 24+ deprecation banner
+  def forkArgs = Seq("--sun-misc-unsafe-memory-access=allow")
+
+  trait MepTests extends SbtTests with TestModule.ZioTest {
+    def mvnDeps = Seq(mvn"dev.zio::zio-test:${V.zio}", mvn"dev.zio::zio-test-sbt:${V.zio}")
+  }
+}
+
+object core extends MepModule {
+  def mvnDeps = Seq(
+    mvn"dev.zio::zio:${V.zio}",
+    mvn"dev.zio::zio-streams:${V.zio}",
+    mvn"dev.zio::zio-config:${V.zioConfig}",
+    mvn"dev.zio::zio-config-magnolia:${V.zioConfig}",
+    mvn"dev.zio::zio-config-typesafe:${V.zioConfig}",
+    mvn"dev.zio::zio-logging:${V.zioLogging}",
+    mvn"dev.zio::zio-logging-slf4j2:${V.zioLogging}",
+    mvn"dev.zio::zio-kafka:${V.zioKafka}",
+    mvn"dev.zio::zio-redis:${V.zioRedis}",
+    mvn"dev.zio::zio-json:${V.zioJson}",
+    // Quill pulls zio-json 0.7 for JSON columns (unused here); it clashes with zio-json 1.x
+    mvn"io.getquill::quill-jdbc-zio:${V.quill}".exclude("dev.zio" -> "zio-json_3"),
+    mvn"org.postgresql:postgresql:${V.postgres}",
+    mvn"com.zaxxer:HikariCP:${V.hikari}",
+    mvn"org.flywaydb:flyway-core:${V.flyway}",
+    mvn"org.flywaydb:flyway-database-postgresql:${V.flyway}",
+    mvn"ch.qos.logback:logback-classic:${V.logback}",
+    mvn"io.scalaland::chimney:${V.chimney}"
+  )
+  object test extends MepTests
+}
+
+object gate extends MepModule {
+  def moduleDeps = Seq(core)
+  def mvnDeps    = Seq(mvn"dev.zio::zio-http:${V.zioHttp}")
+  def mainClass  = Some("com.github.olehbohatyi.mep.gate.GateApp")
+  object test extends MepTests {
+    def moduleDeps = super.moduleDeps ++ Seq(core.test)
+  }
+}
+
+object pipe extends MepModule {
+  def moduleDeps = Seq(core)
+  def mainClass  = Some("com.github.olehbohatyi.mep.pipe.PipeApp")
+  object test extends MepTests {
+    def moduleDeps = super.moduleDeps ++ Seq(core.test)
+  }
+}
+
+// Spark 4.x links against the Scala 2.13 stdlib and does not run on JDK 24+,
+// so stat stays on Scala 3.7, runs on Java 21 and does not depend on core
+object stat extends MepModule {
+  def scalaVersion   = V.scalaSpark
+  def jvmId          = "temurin:21"
+  def scalacOptions  = super.scalacOptions() ++ Seq("-release", "21")
+  def forkArgs       = Seq(
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED"
+  )
+  def mainClass      = Some("com.github.olehbohatyi.mep.stat.StatApp")
+  def compileMvnDeps = Seq(mvn"org.apache.spark:spark-sql_2.13:${V.spark}")
+  def mvnDeps        = Seq(mvn"org.postgresql:postgresql:${V.postgres}")
+  // A plain jar for spark-submit, without mill's launcher script prepended
+  def prependShellScript = ""
+  // Spark provides scala-library 2.13; keep only scala3-library in the fat jar
+  def upstreamIvyAssemblyClasspath = Task {
+    super.upstreamIvyAssemblyClasspath().filterNot(_.path.last.startsWith("scala-library"))
+  }
+  object test extends MepTests {
+    def jvmId    = "temurin:21"
+    def forkArgs = stat.forkArgs()
+    def mvnDeps  = super.mvnDeps() ++ Seq(mvn"org.apache.spark:spark-sql_2.13:${V.spark}")
+  }
+}
+
+// Integration tests against real Postgres, Redis and Kafka (Testcontainers; needs Docker)
+object it extends MepModule {
+  def moduleDeps = Seq(core, gate, pipe)
+  object test extends MepTests {
+    def moduleDeps = super.moduleDeps ++ Seq(core.test)
+    def mvnDeps    = super.mvnDeps() ++ Seq(
+      mvn"org.testcontainers:testcontainers-postgresql:${V.testcont}",
+      mvn"org.testcontainers:testcontainers-kafka:${V.testcont}"
+    )
+  }
+}
