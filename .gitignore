@@ -1,0 +1,29 @@
+# sbt
+target/
+.bsp/
+project/target/
+project/project/
+
+# mill
+out/
+.mill-version
+
+# Metals / Bloop / scala-cli
+.metals/
+.bloop/
+.scala-build/
+metals.sbt
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.code-workspace
+
+# env
+.env
+.env.local
+
+# OS
+.DS_Store
+*.swp
