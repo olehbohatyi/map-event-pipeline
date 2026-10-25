@@ -1,7 +1,27 @@
 # map-event-pipeline — infrastructure + applications
 #
 #   cp .env.example .env              # once; pick the broker in COMPOSE_PROFILES
-#   docker compose up -d
+#   docker compose up -d --build      # postgres, redis, broker, gate, pipe
+#   docker compose run --rm stat      # Spark aggregation job (profile: stat)
+#
+# Both brokers answer to the network alias `broker`, so the apps need no
+# per-profile settings. From the host use localhost:${KAFKA_PORT} / ${REDPANDA_PORT}.
+
+x-app-env: &app-env
+  POSTGRES_URL:            "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+  POSTGRES_USER:           ${POSTGRES_USER}
+  POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  REDIS_HOST:              redis
+  REDIS_PORT:              "6379"
+  KAFKA_BOOTSTRAP_SERVERS: broker:9092
+
+x-broker-deps: &broker-deps
+  kafka:
+    condition: service_healthy
+    required: false
+  redpanda:
+    condition: service_healthy
+    required: false
 
 services:
 
@@ -47,16 +67,20 @@ services:
     container_name: mep-kafka
     profiles: [kafka]
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [broker]
     ports:
-      - "${KAFKA_PORT}:9092"
+      - "${KAFKA_PORT}:9094"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://broker:9092,EXTERNAL://localhost:${KAFKA_PORT}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -66,7 +90,7 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -79,17 +103,17 @@ services:
     container_name: mep-redpanda
     profiles: [redpanda]
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [broker]
     command:
       - redpanda
       - start
+      - --mode dev-container
       - --smp 1
       - --memory 512M
-      - --reserve-memory 0M
-      - --overprovisioned
-      - --node-id 0
-      - --check=false
-      - --kafka-addr PLAINTEXT://0.0.0.0:19092
-      - --advertise-kafka-addr PLAINTEXT://redpanda:19092
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://broker:9092,external://localhost:${REDPANDA_PORT}
     ports:
       - "${REDPANDA_PORT}:19092"
     volumes:
@@ -126,6 +150,7 @@ services:
     container_name: mep-gate
     restart: unless-stopped
     depends_on:
+      <<: *broker-deps
       postgres:
         condition: service_healthy
       redis:
@@ -133,14 +158,9 @@ services:
     ports:
       - "${GATE_PORT}:8080"
     environment:
-      GATE_HOST:               0.0.0.0
-      GATE_PORT:               "8080"
-      POSTGRES_URL:            "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      POSTGRES_USER:           ${POSTGRES_USER}
-      POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD}
-      REDIS_HOST:              redis
-      REDIS_PORT:              "6379"
-      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      <<: *app-env
+      GATE_HOST: 0.0.0.0
+      GATE_PORT: "8080"
 
   pipe:
     build:
@@ -150,17 +170,13 @@ services:
     container_name: mep-pipe
     restart: unless-stopped
     depends_on:
+      <<: *broker-deps
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      POSTGRES_URL:            "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      POSTGRES_USER:           ${POSTGRES_USER}
-      POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD}
-      REDIS_HOST:              redis
-      REDIS_PORT:              "6379"
-      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      <<: *app-env
 
   # One-shot batch job: docker compose run --rm stat
   stat:
@@ -175,9 +191,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      POSTGRES_URL:      "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
-      POSTGRES_USER:     ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      <<: *app-env
 
 volumes:
   postgres_data:
