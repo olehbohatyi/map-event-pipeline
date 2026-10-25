@@ -40,5 +40,5 @@ object GateApp extends ZIOAppDefault:
       _         <- ZIO.logInfo(s"Gate listening on ${cfg.host}:${cfg.port}")
       _         <- Server
                      .serve(GateRoutes(ingestion, query))
-                     .provide(Server.defaultWithPort(cfg.port))
+                     .provide(Server.defaultWith(_.binding(cfg.host, cfg.port)))
     yield ()
