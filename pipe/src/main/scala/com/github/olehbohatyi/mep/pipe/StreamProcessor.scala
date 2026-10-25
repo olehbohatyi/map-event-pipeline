@@ -24,16 +24,16 @@ object StreamProcessor:
     def run: Task[Unit] =
       consumer
         .plainStream(Subscription.topics(kafka.topics.raw), Serde.string, Serde.string)
-        .mapZIO(record => process(record.value).as(record.offset))
+        .mapZIO(record => process(record.key, record.value).as(record.offset))
         .aggregateAsync(Consumer.offsetBatches)
         .mapZIO(_.commit)
         .runDrain
 
-    private def process(payload: String): Task[Unit] =
-      ZIO
-        .fromEither(EventCodec.decode(payload))
-        .mapError(err => RuntimeException(s"Malformed event: $err"))
-        .flatMap { event =>
+    private def process(key: String, payload: String): Task[Unit] =
+      EventCodec.decode(payload) match
+        // A malformed record would never succeed; skip it instead of blocking the partition
+        case Left(err)    => ZIO.logWarning(s"Skipping malformed event (key=$key): $err")
+        case Right(event) =>
           handler
             .handle(event)
             .flatMap {
@@ -41,4 +41,3 @@ object StreamProcessor:
               case Outcome.Duplicate        => ZIO.logInfo(s"Skipping duplicate event ${event.id}")
             }
             .catchAll(err => ZIO.logError(s"Failed to process event ${event.id}: ${err.getMessage}"))
-        }
