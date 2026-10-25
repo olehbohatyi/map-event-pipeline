@@ -6,9 +6,9 @@ import java.time.Instant
 import java.util.UUID
 import javax.sql.DataSource
 
+import com.github.olehbohatyi.mep.domain.*
 import io.getquill.*
 import io.scalaland.chimney.dsl.*
-import com.github.olehbohatyi.mep.domain.*
 
 // Row representation of the map_events table
 final case class MapEventRow(
@@ -43,9 +43,13 @@ trait EventRepo:
   // Returns false when an event with the same id is already stored
   def insert(event: MapEvent): Task[Boolean]
   def findById(id: UUID): Task[Option[MapEvent]]
+  // Events within radiusKm of center, nearest first
   def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[List[MapEvent]]
 
 object EventRepo:
+
+  // Upper bound of rows fetched from the bounding box before the exact distance filter
+  private val MaxCandidates = 5000
 
   val live: URLayer[DataSource, EventRepo] =
     ZLayer.fromFunction(EventRepoLive(_))
@@ -69,16 +73,40 @@ object EventRepo:
         .map(_.headOption.map(MapEventRow.toDomain))
         .provideEnvironment(env)
 
-    // Square box of ±radius around the center (1° ≈ 111 km)
     def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[List[MapEvent]] =
-      val delta = radiusKm / 111.0
+      val box = BoundingBox.around(center, radiusKm)
       run(
         events
           .filter(r =>
-            r.lat >= lift(center.lat - delta) && r.lat <= lift(center.lat + delta) &&
-            r.lon >= lift(center.lon - delta) && r.lon <= lift(center.lon + delta)
+            r.lat >= lift(box.minLat) && r.lat <= lift(box.maxLat) &&
+            r.lon >= lift(box.minLon) && r.lon <= lift(box.maxLon)
           )
-          .take(lift(limit))
+          .take(lift(MaxCandidates))
       )
-        .map(_.map(MapEventRow.toDomain))
+        .map(
+          _.map(MapEventRow.toDomain)
+            .map(e => e -> GeoPoint.distanceKm(center, e.location))
+            .filter(_._2 <= radiusKm)
+            .sortBy(_._2)
+            .take(limit)
+            .map(_._1)
+        )
         .provideEnvironment(env)
+
+// Lat/lon box enclosing a circle; the lon span widens with latitude
+final case class BoundingBox(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double)
+
+object BoundingBox:
+
+  private val KmPerDegree = 111.32
+
+  def around(center: GeoPoint, radiusKm: Double): BoundingBox =
+    val dLat   = radiusKm / KmPerDegree
+    val cosLat = math.cos(math.toRadians(center.lat))
+    val dLon   = if cosLat < 1e-6 then 180.0 else math.min(180.0, radiusKm / (KmPerDegree * cosLat))
+    BoundingBox(
+      minLat = math.max(-90.0, center.lat - dLat),
+      maxLat = math.min(90.0, center.lat + dLat),
+      minLon = center.lon - dLon,
+      maxLon = center.lon + dLon,
+    )
