@@ -1,7 +1,7 @@
 package com.github.olehbohatyi.mep.pipe
 
 import zio.*
-import zio.kafka.consumer.{ Consumer, Subscription }
+import zio.kafka.consumer.{ Consumer, ConsumerSettings, Subscription }
 import zio.kafka.serde.Serde
 
 import com.github.olehbohatyi.mep.broker.EventCodec
@@ -15,6 +15,14 @@ object StreamProcessor:
   // Transient failures (DB/Redis/Kafka hiccups) are retried; if they persist the stream
   // fails without committing, so the record is redelivered after restart
   private val retryPolicy = Schedule.exponential(200.millis) && Schedule.recurs(5)
+
+  // A new consumer group starts from the beginning of the raw topic, not just new records
+  val consumerSettings: URLayer[KafkaConfig, ConsumerSettings] =
+    ZLayer.fromFunction((cfg: KafkaConfig) =>
+      ConsumerSettings(cfg.servers)
+        .withGroupId(cfg.consumerGroup)
+        .withOffsetRetrieval(Consumer.OffsetRetrieval.Auto(Consumer.AutoOffsetStrategy.Earliest))
+    )
 
   val live: URLayer[Consumer & KafkaConfig & EventHandler, StreamProcessor] =
     ZLayer.fromFunction(StreamProcessorLive(_, _, _))
