@@ -8,7 +8,7 @@ import com.github.olehbohatyi.mep.domain.GeoPoint
 
 object GateRoutes:
 
-  // POST /api/v1/events        — ingest a road event
+  // POST /api/v1/events        — ingest a road event (optional Idempotency-Key header)
   // GET  /api/v1/events/nearby — events around lat/lon within radius (km)
   // GET  /api/v1/stats         — aggregated counts, optionally ?region=
   // GET  /api/v1/health        — liveness probe
@@ -40,7 +40,8 @@ object GateRoutes:
       .flatMap {
         case Left(err) => ZIO.succeed(badRequest(s"invalid body: $err"))
         case Right(r)  =>
-          ingestion.ingest(r).map {
+          val key = req.rawHeader("Idempotency-Key").map(_.trim).filter(_.nonEmpty)
+          ingestion.ingest(r, key).map {
             case IngestionResult.Accepted(id)  => json(Status.Accepted, IngestResponse(id, "accepted"))
             case IngestionResult.Duplicate(id) => json(Status.Ok, IngestResponse(id, "duplicate"))
           }

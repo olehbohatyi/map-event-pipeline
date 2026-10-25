@@ -16,8 +16,9 @@ object GateRoutesSpec extends ZIOSpecDefault:
   private val fixedId = UUID.fromString("00000000-0000-0000-0000-000000000001")
 
   private object StubIngestion extends IngestionService:
-    def ingest(request: EventRequest): Task[IngestionResult] =
-      request.description match
+    def ingest(request: EventRequest, idempotencyKey: Option[String]): Task[IngestionResult] =
+      idempotencyKey match
+        case Some("dup")  => ZIO.succeed(IngestionResult.Duplicate(fixedId))
         case Some("boom") => ZIO.fail(RuntimeException("kafka down"))
         case _            => ZIO.succeed(IngestionResult.Accepted(fixedId))
 
@@ -49,6 +50,11 @@ object GateRoutesSpec extends ZIOSpecDefault:
       call(Request.post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody)))
         .map((s, b) => assertTrue(s == Status.Accepted, b.contains("\"status\":\"accepted\"")))
     },
+    test("reports a duplicate Idempotency-Key with 200") {
+      val req =
+        Request.post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody)).addHeader("Idempotency-Key", "dup")
+      call(req).map((s, b) => assertTrue(s == Status.Ok, b.contains("\"status\":\"duplicate\"")))
+    },
     test("rejects an invalid body with 400 and well-formed JSON") {
       call(Request.post(URL(Path.decode("/api/v1/events")), Body.fromString("""{"eventType":"Meteor"}""")))
         .map((s, b) =>
@@ -60,7 +66,9 @@ object GateRoutesSpec extends ZIOSpecDefault:
         )
     },
     test("maps ingestion failures to 500") {
-      val req = Request.post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody.replace("ice", "boom")))
+      val req = Request
+        .post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody))
+        .addHeader("Idempotency-Key", "boom")
       call(req).map((s, b) => assertTrue(s == Status.InternalServerError, b == """{"error":"internal"}"""))
     },
     test("nearby passes parsed params with defaults") {
