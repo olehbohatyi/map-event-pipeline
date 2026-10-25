@@ -1,0 +1,11 @@
+**/target
+out
+.git
+.github
+.bsp
+.bloop
+.metals
+.idea
+.vscode
+.env
+it
