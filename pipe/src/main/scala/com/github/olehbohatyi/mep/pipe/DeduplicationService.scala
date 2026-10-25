@@ -11,7 +11,8 @@ trait DeduplicationService:
 
 object DeduplicationService:
 
-  val Namespace = "mep:idempotency"
+  // Own keyspace — must not overlap with the gate's idempotency keys
+  val Namespace = "mep:pipe:processed"
 
   private val ProcessedTtl = 48.hours
 

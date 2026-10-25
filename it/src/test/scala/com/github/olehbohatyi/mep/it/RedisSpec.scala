@@ -7,7 +7,8 @@ import zio.test.*
 import com.github.olehbohatyi.mep.caches.*
 import com.github.olehbohatyi.mep.config.KafkaConfig
 import com.github.olehbohatyi.mep.domain.*
-import com.github.olehbohatyi.mep.pipe.EscalationService
+import com.github.olehbohatyi.mep.gate.IngestionService
+import com.github.olehbohatyi.mep.pipe.{ DeduplicationService, EscalationService }
 import com.github.olehbohatyi.mep.testkit.Samples
 
 object RedisSpec extends ZIOSpecDefault:
@@ -23,6 +24,16 @@ object RedisSpec extends ZIOSpecDefault:
         _     <- ZIO.sleep(1500.millis)
         c     <- cache.tryMark("k", 1.second)
       yield assertTrue(a, !b, c)
+    },
+    test("gate idempotency keys and pipe processed keys do not collide") {
+      val id = Samples.event().id.toString
+      for
+        redis     <- ZIO.service[Redis]
+        gate       = IdempotencyCache(IngestionService.Namespace, redis)
+        pipe       = IdempotencyCache(DeduplicationService.Namespace, redis)
+        _         <- gate.mark(id, 1.minute)
+        processed <- pipe.isMarked(id)
+      yield assertTrue(!processed)
     },
     test("geo cache round-trips regions") {
       for
