@@ -8,7 +8,8 @@ import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.stores.EventRepo
 
 final class InMemoryEventRepo(rows: Ref[Map[UUID, MapEvent]]) extends EventRepo:
-  def insert(event: MapEvent): Task[Unit]                                              = rows.update(_ + (event.id -> event))
+  def insert(event: MapEvent): Task[Boolean]                                           =
+    rows.modify(m => if m.contains(event.id) then (false, m) else (true, m + (event.id -> event)))
   def findById(id: UUID): Task[Option[MapEvent]]                                       = rows.get.map(_.get(id))
   def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[List[MapEvent]] =
     rows

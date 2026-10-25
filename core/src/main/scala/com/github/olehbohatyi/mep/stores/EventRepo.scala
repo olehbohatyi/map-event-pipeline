@@ -40,7 +40,8 @@ object MapEventRow:
       .transform
 
 trait EventRepo:
-  def insert(event: MapEvent): Task[Unit]
+  // Returns false when an event with the same id is already stored
+  def insert(event: MapEvent): Task[Boolean]
   def findById(id: UUID): Task[Option[MapEvent]]
   def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[List[MapEvent]]
 
@@ -57,10 +58,10 @@ object EventRepo:
 
     private val env = ZEnvironment(ds)
 
-    def insert(event: MapEvent): Task[Unit] =
+    def insert(event: MapEvent): Task[Boolean] =
       val row = MapEventRow.from(event)
-      run(events.insertValue(lift(row)))
-        .unit
+      run(events.insertValue(lift(row)).onConflictIgnore)
+        .map(_ > 0)
         .provideEnvironment(env)
 
     def findById(id: UUID): Task[Option[MapEvent]] =

@@ -17,13 +17,14 @@ object PostgresSpec extends ZIOSpecDefault:
     )
 
   def spec = (suite("Postgres stores")(
-    test("stores and finds an event by id") {
+    test("insert is idempotent by event id") {
       val event = Samples.event(status = EventStatus.Enriched, region = Some("zone_50_30"))
       for
-        repo  <- ZIO.service[EventRepo]
-        _     <- repo.insert(event)
-        found <- repo.findById(event.id)
-      yield assertTrue(found.contains(event))
+        repo   <- ZIO.service[EventRepo]
+        first  <- repo.insert(event)
+        second <- repo.insert(event.copy(description = Some("changed")))
+        found  <- repo.findById(event.id)
+      yield assertTrue(first, !second, found.contains(event))
     },
     test("stats are read per region from map_event_stats") {
       for
