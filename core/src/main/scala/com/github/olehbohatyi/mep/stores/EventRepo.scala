@@ -53,7 +53,7 @@ object EventRepo:
 
     import QuillContext.{ *, given }
 
-    inline private def events = quote(query[MapEventRow])
+    inline private def events = quote(querySchema[MapEventRow]("map_events"))
 
     private val env = ZEnvironment(ds)
 

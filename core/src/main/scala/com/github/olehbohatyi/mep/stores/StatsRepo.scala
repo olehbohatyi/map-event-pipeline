@@ -30,7 +30,7 @@ object StatsRepo:
 
     import QuillContext.{ *, given }
 
-    inline private def stats = quote(query[MapEventStat])
+    inline private def stats = quote(querySchema[MapEventStat]("map_event_stats"))
 
     private val env = ZEnvironment(ds)
 
