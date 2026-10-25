@@ -15,7 +15,7 @@ final case class AppConfig(
 object AppConfig:
 
   private val descriptor: Config[AppConfig] =
-    deriveConfig[AppConfig].mapKey(toKebabCase)
+    deriveConfig[AppConfig].mapKey(toKebabCase).nested("mep")
 
   val live: ZLayer[Any, Config.Error, AppConfig] =
     ZLayer.fromZIO(TypesafeConfigProvider.fromResourcePath().load(descriptor))
