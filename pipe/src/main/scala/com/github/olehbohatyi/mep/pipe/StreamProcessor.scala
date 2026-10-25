@@ -12,6 +12,10 @@ trait StreamProcessor:
 
 object StreamProcessor:
 
+  // Transient failures (DB/Redis/Kafka hiccups) are retried; if they persist the stream
+  // fails without committing, so the record is redelivered after restart
+  private val retryPolicy = Schedule.exponential(200.millis) && Schedule.recurs(5)
+
   val live: URLayer[Consumer & KafkaConfig & EventHandler, StreamProcessor] =
     ZLayer.fromFunction(StreamProcessorLive(_, _, _))
 
@@ -36,8 +40,9 @@ object StreamProcessor:
         case Right(event) =>
           handler
             .handle(event)
+            .tapError(err => ZIO.logWarning(s"Event ${event.id} failed, retrying: ${err.getMessage}"))
+            .retry(retryPolicy)
             .flatMap {
               case Outcome.Processed(topic) => ZIO.logInfo(s"Processed event ${event.id} → $topic")
               case Outcome.Duplicate        => ZIO.logInfo(s"Skipping duplicate event ${event.id}")
             }
-            .catchAll(err => ZIO.logError(s"Failed to process event ${event.id}: ${err.getMessage}"))
