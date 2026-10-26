@@ -60,6 +60,10 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - Redis outlives deployments: change how regions are resolved or named and cached values from the old code keep
   being served until their TTL. Bump `GeoCache.KeyVersion` (and add a data migration like `V4` if stored values
   change). Test upgrades with real state — a unit test cannot see a stale Redis or an old schema.
+- The gate API is declared as zio-http `Endpoint`s in `GateApi`; routes and the OpenAPI document both come from them.
+  zio-json writes the bytes (wire format: enums as plain strings, `None` omitted), zio-schema (`derives Schema`, enums
+  need `@simpleEnum`) only feeds the spec. Changing the API means regenerating the golden file:
+  `UPDATE_OPENAPI=1 sbt "gate/testOnly *OpenApiSpec"`. zio-http's own decode errors are rewritten to `{"error": ...}`.
 - Inside compose the apps reach Kafka as `broker:9092` (network alias of both broker profiles); from the host it is
   `localhost:${KAFKA_PORT}`.
 
