@@ -57,5 +57,6 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 
 - `/verify` (`.claude/skills/verify`) runs `scripts/verify.sh` and reports failures with file:line links.
 - A PostToolUse hook (`.claude/hooks/scalafmt.sh`) formats each `.scala`/`.sbt` file after Edit/Write and reports
-  parse errors back. A native `scalafmt` makes it instant: `cs install scalafmt`; otherwise it falls back to
-  `cs launch scalafmt` (~5 s per edit).
+  parse errors back. It uses the first `scalafmt` on `PATH`, else `cs launch scalafmt`. The JVM CLI (incl.
+  `cs install scalafmt`) takes ~4 s per edit; the GraalVM native binary from the scalafmt GitHub release
+  (`scalafmt-<arch>-apple-darwin.zip`) is near-instant.
