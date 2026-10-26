@@ -28,8 +28,10 @@ services:
   # ── Always-on infrastructure ──────────────────────────────────────────────
 
   postgres:
-    # PostgreSQL 18 with PostGIS 3.6: nearby queries and the region polygons need it
-    image: postgis/postgis:18-3.6-alpine
+    # PostgreSQL 18 with PostGIS 3.6: nearby queries and the region polygons need it.
+    # Pinned by digest (PostgreSQL 18.6, PostGIS 3.6.4): upstream publishes no patch-level tag, so the tag alone
+    # would change under us. To update, pull the tag, copy the new digest here and into it/.../Containers.scala.
+    image: postgis/postgis:18-3.6-alpine@sha256:c53a483fc274072dfa02cd491efa79f3c8ae0a10774a0ece6c9c53b6a632cdef
     container_name: mep-postgres
     restart: unless-stopped
     environment:
