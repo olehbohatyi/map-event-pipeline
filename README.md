@@ -40,9 +40,26 @@ and a Spark batch job aggregates per-region statistics that the gateway serves b
   published once (Redis `SET NX`, 24 h). Without the header every request is a new event.
 - **Pipe.** At-least-once. Offsets are committed only after an event is handled. Transient failures are retried
   with backoff; if they persist, the stream stops without committing, so the record is redelivered after a restart.
-  Malformed records are logged and skipped. Writes are idempotent (`ON CONFLICT DO NOTHING`), and processed ids are
-  remembered for 48 h under their own Redis keyspace.
+  A malformed record is never dropped: it is published as-is to `map.events.dlq` with headers naming the error and
+  its source topic, partition and offset, and only then committed. Writes are idempotent (`ON CONFLICT DO NOTHING`),
+  and processed ids are remembered for 48 h under their own Redis keyspace.
 - **Escalation.** A `Low` event becomes `Medium` once its region sees 5 events of the same type within 5 minutes.
+
+### Topics
+
+Brokers run with topic auto-creation **off**. Both apps run `TopicBootstrap` at startup (zio-kafka `AdminClient`):
+it creates any missing topic with the partitions, replication factor and retention from `mep.kafka.topic-settings`
+in `application.conf`, and tolerates gate and pipe racing to create the same topic.
+
+| Topic | Written by | Contents | Retention |
+|---|---|---|---|
+| `map.events.raw` | gate | accepted events, JSON | 7 days |
+| `map.events.enriched` | pipe | every processed event | 7 days |
+| `map.events.{hazards,signs,traffic}` | pipe | processed events by type | 7 days |
+| `map.events.dlq` | pipe | records that could not be decoded, payload unchanged; headers `mep.error`, `mep.source.topic`, `mep.source.partition`, `mep.source.offset`, `mep.failed-at` | 14 days |
+
+All topics are keyed by event id (3 partitions by default; `KAFKA_REPLICATION_FACTOR` overrides the replication
+factor for multi-broker clusters).
 
 ## Tech stack
 
