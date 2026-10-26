@@ -10,6 +10,7 @@ object Versions {
   val zioHttp    = "3.11.6"
   val zioRedis   = "1.3.0"
   val zioJson    = "1.1.1"
+  val zioSchema  = "1.8.7"
   val zioLogging = "2.5.3"
   val quill      = "4.8.6"
   val postgres   = "42.7.14"
@@ -39,10 +40,12 @@ object Dependencies {
     "dev.zio" %% "zio-logging-slf4j2" % Versions.zioLogging,
   )
 
-  val zioKafka = "dev.zio" %% "zio-kafka" % Versions.zioKafka
-  val zioHttp  = "dev.zio" %% "zio-http"  % Versions.zioHttp
-  val zioRedis = "dev.zio" %% "zio-redis" % Versions.zioRedis
-  val zioJson  = "dev.zio" %% "zio-json"  % Versions.zioJson
+  val zioKafka            = "dev.zio" %% "zio-kafka"             % Versions.zioKafka
+  val zioHttp             = "dev.zio" %% "zio-http"              % Versions.zioHttp
+  val zioRedis            = "dev.zio" %% "zio-redis"             % Versions.zioRedis
+  val zioJson             = "dev.zio" %% "zio-json"              % Versions.zioJson
+  val zioSchema           = "dev.zio" %% "zio-schema"            % Versions.zioSchema
+  val zioSchemaDerivation = "dev.zio" %% "zio-schema-derivation" % Versions.zioSchema
 
   // Quill pulls zio-json 0.7 for JSON columns (unused here); it clashes with zio-json 1.x
   val quill    = "io.getquill"     %% "quill-jdbc-zio"             % Versions.quill exclude ("dev.zio", "zio-json_3")
@@ -66,7 +69,20 @@ object Dependencies {
 
   val coreDeps: Seq[ModuleID] =
     zio ++ zioConfig ++ zioLogging ++
-      Seq(zioKafka, zioRedis, zioJson, quill, postgres, hikari, flyway, flywayPg, logback, chimney) ++
+      Seq(
+        zioKafka,
+        zioRedis,
+        zioJson,
+        zioSchema,
+        zioSchemaDerivation,
+        quill,
+        postgres,
+        hikari,
+        flyway,
+        flywayPg,
+        logback,
+        chimney,
+      ) ++
       zioTest
 
   val gateDeps: Seq[ModuleID] = Seq(zioHttp) ++ zioTest

@@ -1,7 +1,8 @@
 package com.github.olehbohatyi.mep.stores
 
 import zio.*
-import zio.json.JsonEncoder
+import zio.json.JsonCodec
+import zio.schema.{ derived, Schema }
 
 import java.time.Instant
 import javax.sql.DataSource
@@ -15,7 +16,8 @@ final case class MapEventStat(
     eventType: EventType,
     count: Long,
     updatedAt: Instant,
-  ) derives JsonEncoder
+  ) derives JsonCodec,
+      Schema
 
 trait StatsRepo:
   def findAll: Task[List[MapEventStat]]
