@@ -42,6 +42,16 @@ object RedisSpec extends ZIOSpecDefault:
         hit   <- cache.get(GeoPoint(1.23459, 2.34568))
       yield assertTrue(miss.isEmpty, hit.contains("airport"))
     },
+    test("geo cache never serves a value written by an older resolver") {
+      // How the previous release stored a resolved point: no version in the key, a grid zone as the value
+      val legacyKey = "mep:geo:3.1416:2.7183"
+      for
+        redis  <- ZIO.service[Redis]
+        cache  <- ZIO.service[GeoCache]
+        _      <- redis.set(legacyKey, "zone_3_2", expireTime = Some(1.minute))
+        served <- cache.get(GeoPoint(3.1416, 2.7183))
+      yield assertTrue(served.isEmpty)
+    },
     test("escalates Low to Medium once a region sees a burst") {
       val events = List.fill(EscalationService.Threshold.toInt)(
         Samples.event(eventType = EventType.Sign, severity = Severity.Low, region = Some("zone_burst"))
