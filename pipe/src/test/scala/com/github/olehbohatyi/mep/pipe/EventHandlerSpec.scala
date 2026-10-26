@@ -40,6 +40,15 @@ object EventHandlerSpec extends ZIOSpecDefault:
         sent.forall(_._2.status == EventStatus.Enriched),
       )
     },
+    test("enriches with the named region when a region polygon contains the point") {
+      val event = Samples.event(location = Samples.Lviv)
+      for
+        handler <- ZIO.service[EventHandler]
+        repo    <- ZIO.service[InMemoryEventRepo]
+        _       <- handler.handle(event)
+        stored  <- repo.findById(event.id)
+      yield assertTrue(stored.exists(_.region.contains("Lviv Oblast")))
+    },
     test("skips events already processed") {
       val event = Samples.event()
       for
@@ -86,6 +95,7 @@ object EventHandlerSpec extends ZIOSpecDefault:
     RecordingProducer.layer,
     InMemoryIdempotencyCache.layer,
     InMemoryGeoCache.layer,
+    InMemoryRegionRepo.layer(Samples.LvivOblast),
     RegionResolver.live,
     DeduplicationService.live,
     EnrichmentService.live,

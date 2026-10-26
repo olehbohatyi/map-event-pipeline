@@ -10,7 +10,7 @@ import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RedisService }
 import com.github.olehbohatyi.mep.config.{ AppConfig, HttpConfig, KafkaConfig }
 import com.github.olehbohatyi.mep.geo.RegionResolver
-import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, StatsRepo }
+import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, RegionRepo, StatsRepo }
 
 object GateApp extends ZIOAppDefault:
 
@@ -26,6 +26,7 @@ object GateApp extends ZIOAppDefault:
       RedisService.live,
       IdempotencyCache.live(IngestionService.Namespace),
       GeoCache.live,
+      RegionRepo.live,
       RegionResolver.live,
       IngestionService.live,
       QueryService.live,
