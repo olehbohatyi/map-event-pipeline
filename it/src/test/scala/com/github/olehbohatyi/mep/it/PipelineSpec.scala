@@ -7,6 +7,7 @@ import zio.kafka.serde.Serde
 import zio.redis.Redis
 import zio.test.*
 
+import org.apache.kafka.clients.producer.ProducerRecord
 import com.github.olehbohatyi.mep.broker.{ EventCodec, ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.*
 import com.github.olehbohatyi.mep.config.*
@@ -36,8 +37,10 @@ object PipelineSpec extends ZIOSpecDefault:
         .map(_.flatMap(r => EventCodec.decode(r.value).toOption))
     }
 
-  // Raw records with their headers, e.g. what landed on the dead-letter topic
-  private def readRaw(cfg: KafkaConfig, topic: String, n: Int): Task[Chunk[(String, Map[String, String])]] =
+  // A record as it landed on a topic, e.g. the dead-letter topic
+  final private case class Landed(key: Option[String], value: String, headers: Map[String, String])
+
+  private def readRaw(cfg: KafkaConfig, topic: String, n: Int): Task[Chunk[Landed]] =
     ZIO.scoped {
       Consumer
         .make(
@@ -47,12 +50,13 @@ object PipelineSpec extends ZIOSpecDefault:
         )
         .flatMap(_.plainStream(Subscription.topics(topic), Serde.string, Serde.string).take(n.toLong).runCollect)
         .map(_.map { r =>
-          r.value -> r
+          val headers = r
             .record
             .headers
             .toArray
             .map(h => h.key -> String(h.value, java.nio.charset.StandardCharsets.UTF_8))
             .toMap
+          Landed(Option(r.key), r.value, headers)
         })
     }
 
@@ -61,11 +65,17 @@ object PipelineSpec extends ZIOSpecDefault:
       for
         cfg       <- ZIO.service[KafkaConfig]
         processor <- ZIO.serviceWithZIO[StreamProcessor](_.run).fork
-        // A poison record first: it must not block the partition
+        // Poison records first: they must not block the partition, with and without a key
         _         <- ZIO.scoped(
-                       Producer
-                         .make(ProducerSettings(cfg.servers))
-                         .flatMap(_.produce(cfg.topics.raw, "bad", "{oops", Serde.string, Serde.string))
+                       Producer.make(ProducerSettings(cfg.servers)).flatMap { producer =>
+                         val noKey: String = null
+                         producer.produce(cfg.topics.raw, "bad", "{oops", Serde.string, Serde.string) *>
+                           producer.produce(
+                             ProducerRecord(cfg.topics.raw, noKey, "{oops-keyless"),
+                             Serde.string,
+                             Serde.string,
+                           )
+                       }
                      )
         gate      <- ZIO.service[IngestionService]
         first     <- gate.ingest(request, Some("e2e-1"))
@@ -74,7 +84,7 @@ object PipelineSpec extends ZIOSpecDefault:
         repo      <- ZIO.service[EventRepo]
         stored    <- eventually(repo.findById(id))
         hazards   <- readTopic(cfg, cfg.topics.hazards, 1).timeoutFail(RuntimeException("no hazard event"))(60.seconds)
-        dlq       <- readRaw(cfg, cfg.topics.dlq, 1).timeoutFail(RuntimeException("no dead letter"))(60.seconds)
+        dlq       <- readRaw(cfg, cfg.topics.dlq, 2).timeoutFail(RuntimeException("no dead letter"))(60.seconds)
         _         <- processor.interrupt
       yield assertTrue(
         first == IngestionResult.Accepted(id),
@@ -82,9 +92,10 @@ object PipelineSpec extends ZIOSpecDefault:
         stored.status == EventStatus.Enriched,
         stored.region.contains("zone_50_30"),
         hazards.map(_.id) == Chunk(id),
-        dlq.map(_._1) == Chunk("{oops"),
-        dlq.head._2(RecordHandler.Headers.SourceTopic) == cfg.topics.raw,
-        dlq.head._2(RecordHandler.Headers.Error).nonEmpty,
+        // Payload and key survive unchanged; a missing key stays missing
+        dlq.map(r => r.value -> r.key).toMap == Map("{oops" -> Some("bad"), "{oops-keyless" -> None),
+        dlq.forall(_.headers(RecordHandler.Headers.SourceTopic) == cfg.topics.raw),
+        dlq.forall(_.headers(RecordHandler.Headers.Error).nonEmpty),
       )
     }
   ) @@ TestAspect.beforeAll(
