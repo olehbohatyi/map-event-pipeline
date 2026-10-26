@@ -90,7 +90,7 @@ object PipelineSpec extends ZIOSpecDefault:
         first == IngestionResult.Accepted(id),
         retry == IngestionResult.Duplicate(id),
         stored.status == EventStatus.Enriched,
-        stored.region.contains("zone_50_30"),
+        stored.region.contains("Kyiv City"),
         hazards.map(_.id) == Chunk(id),
         // Payload and key survive unchanged; a missing key stays missing
         dlq.map(r => r.value -> r.key).toMap == Map("{oops" -> Some("bad"), "{oops-keyless" -> None),
@@ -112,6 +112,7 @@ object PipelineSpec extends ZIOSpecDefault:
       StreamProcessor.consumerSettings,
       Consumer.live,
       GeoCache.live,
+      RegionRepo.live,
       RegionResolver.live,
       // gate and pipe use separate keyspaces, each with its own cache instance
       ZLayer.makeSome[Redis & ProducerService & KafkaConfig, IngestionService](

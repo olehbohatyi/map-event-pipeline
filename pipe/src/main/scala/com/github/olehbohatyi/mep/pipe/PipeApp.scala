@@ -10,7 +10,7 @@ import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RedisService }
 import com.github.olehbohatyi.mep.config.{ AppConfig, KafkaConfig }
 import com.github.olehbohatyi.mep.geo.RegionResolver
-import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations }
+import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, RegionRepo }
 
 object PipeApp extends ZIOAppDefault:
 
@@ -27,6 +27,7 @@ object PipeApp extends ZIOAppDefault:
       RedisService.live,
       IdempotencyCache.live(DeduplicationService.Namespace),
       GeoCache.live,
+      RegionRepo.live,
       RegionResolver.live,
       DeduplicationService.live,
       EnrichmentService.live,
