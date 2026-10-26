@@ -3,15 +3,14 @@ package com.github.olehbohatyi.mep.pipe
 import zio.*
 import zio.test.*
 
-import com.github.olehbohatyi.mep.config.{ KafkaConfig, TopicsConfig }
+import com.github.olehbohatyi.mep.config.KafkaConfig
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.testkit.*
 
 object EventHandlerSpec extends ZIOSpecDefault:
 
-  val topics = TopicsConfig("raw", "enriched", "hazards", "signs", "traffic")
-  val kafka  = KafkaConfig("unused:9092", "g", topics)
+  val kafka = TestKafka.config()
 
   // Escalation without Redis: route by type, never escalate
   private val routingOnly: URLayer[KafkaConfig, EscalationService] = ZLayer.fromFunction((cfg: KafkaConfig) =>

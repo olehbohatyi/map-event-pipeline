@@ -3,13 +3,12 @@ package com.github.olehbohatyi.mep.gate
 import zio.*
 import zio.test.*
 
-import com.github.olehbohatyi.mep.config.{ KafkaConfig, TopicsConfig }
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.testkit.*
 
 object IngestionServiceSpec extends ZIOSpecDefault:
 
-  val kafka   = KafkaConfig("unused:9092", "g", TopicsConfig("raw", "enriched", "hazards", "signs", "traffic"))
+  val kafka   = TestKafka.config()
   val request = EventRequest(EventType.Sign, Severity.Medium, Samples.Kyiv, Some("stop sign down"), None)
 
   def spec = suite("IngestionService")(
