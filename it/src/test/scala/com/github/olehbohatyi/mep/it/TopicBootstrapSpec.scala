@@ -6,7 +6,7 @@ import zio.kafka.admin.AdminClient.{ ConfigResource, ConfigResourceType }
 import zio.test.*
 
 import com.github.olehbohatyi.mep.broker.TopicBootstrap
-import com.github.olehbohatyi.mep.config.KafkaConfig
+import com.github.olehbohatyi.mep.config.{ KafkaConfig, TopicsConfig }
 
 // Runs against a broker with auto-create disabled, like docker-compose
 object TopicBootstrapSpec extends ZIOSpecDefault:
@@ -29,6 +29,22 @@ object TopicBootstrapSpec extends ZIOSpecDefault:
         topics.values.forall(_.partitions.size == cfg.topicSettings.partitions),
         retention(cfg.topics.dlq) == (cfg.topicSettings.dlqRetentionHours * 3600000L).toString,
         retention(cfg.topics.raw) == (cfg.topicSettings.retentionHours * 3600000L).toString,
+      )
+    },
+    test("fails fast, without retrying, when the broker rejects the topic settings") {
+      // Replication factor 3 can never succeed on this single-broker cluster
+      val impossible = (cfg: KafkaConfig) =>
+        cfg.copy(
+          topics = TopicsConfig("rf-raw", "rf-enriched", "rf-hazards", "rf-signs", "rf-traffic", "rf-dlq"),
+          topicSettings = cfg.topicSettings.copy(replicationFactor = 3),
+        )
+      for
+        cfg    <- ZIO.service[KafkaConfig]
+        // The full retry schedule takes minutes; a prompt failure proves it was not used
+        result <- TopicBootstrap.run.provide(ZLayer.succeed(impossible(cfg))).exit.timeout(30.seconds)
+      yield assertTrue(
+        result.exists(_.isFailure),
+        result.flatMap(_.causeOption).flatMap(_.failureOption).exists(TopicBootstrap.isPermanent),
       )
     },
     test("is safe to run again and concurrently (gate and pipe start together)") {
