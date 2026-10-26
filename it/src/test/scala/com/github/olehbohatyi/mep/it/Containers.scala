@@ -12,9 +12,11 @@ import com.github.olehbohatyi.mep.testkit.TestKafka
 // Throwaway infrastructure for integration tests (same images as docker-compose)
 object Containers:
 
-  // Same image as docker-compose; PostGIS images are not named "postgres", so declare the compatibility
+  // Same image, same digest as docker-compose; PostGIS images are not named "postgres", so declare the compatibility
   private val PostgisImage =
-    DockerImageName.parse("postgis/postgis:18-3.6-alpine").asCompatibleSubstituteFor("postgres")
+    DockerImageName
+      .parse("postgis/postgis:18-3.6-alpine@sha256:c53a483fc274072dfa02cd491efa79f3c8ae0a10774a0ece6c9c53b6a632cdef")
+      .asCompatibleSubstituteFor("postgres")
 
   final class RedisContainer extends GenericContainer[RedisContainer]("redis:8.6.3-alpine3.23")
 
