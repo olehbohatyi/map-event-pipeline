@@ -5,11 +5,10 @@ import zio.redis.Redis
 import zio.test.*
 
 import com.github.olehbohatyi.mep.caches.*
-import com.github.olehbohatyi.mep.config.KafkaConfig
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.gate.IngestionService
 import com.github.olehbohatyi.mep.pipe.{ DeduplicationService, EscalationService }
-import com.github.olehbohatyi.mep.testkit.Samples
+import com.github.olehbohatyi.mep.testkit.{ Samples, TestKafka }
 
 object RedisSpec extends ZIOSpecDefault:
 
@@ -57,6 +56,6 @@ object RedisSpec extends ZIOSpecDefault:
     .provideShared(
       withRedis,
       GeoCache.live,
-      ZLayer.succeed(KafkaConfig("unused:9092", "g", Containers.topics)),
+      ZLayer.succeed(TestKafka.config()),
       EscalationService.live,
     )
