@@ -6,9 +6,9 @@ import zio.http.*
 import javax.sql.DataSource
 
 import com.github.olehbohatyi.mep.AppLogging
-import com.github.olehbohatyi.mep.broker.ProducerService
+import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RedisService }
-import com.github.olehbohatyi.mep.config.{ AppConfig, HttpConfig }
+import com.github.olehbohatyi.mep.config.{ AppConfig, HttpConfig, KafkaConfig }
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, StatsRepo }
 
@@ -31,9 +31,10 @@ object GateApp extends ZIOAppDefault:
       QueryService.live,
     )
 
-  private val program: RIO[IngestionService & QueryService & HttpConfig & DataSource, Unit] =
+  private val program: RIO[IngestionService & QueryService & HttpConfig & KafkaConfig & DataSource, Unit] =
     for
       _         <- Migrations.run
+      _         <- TopicBootstrap.run
       cfg       <- ZIO.service[HttpConfig]
       ingestion <- ZIO.service[IngestionService]
       query     <- ZIO.service[QueryService]
