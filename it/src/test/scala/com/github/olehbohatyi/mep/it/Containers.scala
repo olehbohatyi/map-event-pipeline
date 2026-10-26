@@ -6,10 +6,15 @@ import com.github.olehbohatyi.mep.config.*
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.kafka.KafkaContainer
 import org.testcontainers.postgresql.PostgreSQLContainer
+import org.testcontainers.utility.DockerImageName
 import com.github.olehbohatyi.mep.testkit.TestKafka
 
 // Throwaway infrastructure for integration tests (same images as docker-compose)
 object Containers:
+
+  // Same image as docker-compose; PostGIS images are not named "postgres", so declare the compatibility
+  private val PostgisImage =
+    DockerImageName.parse("postgis/postgis:18-3.6-alpine").asCompatibleSubstituteFor("postgres")
 
   final class RedisContainer extends GenericContainer[RedisContainer]("redis:8.6.3-alpine3.23")
 
@@ -18,7 +23,7 @@ object Containers:
 
   val postgres: ZLayer[Any, Throwable, PostgresConfig] =
     ZLayer.scoped(
-      started(PostgreSQLContainer("postgres:18.4-alpine3.23"))
+      started(PostgreSQLContainer(PostgisImage))
         .map(c => PostgresConfig(c.getJdbcUrl, c.getUsername, c.getPassword, maxPool = 4))
     )
 
