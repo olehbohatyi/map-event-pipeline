@@ -6,6 +6,7 @@ import com.github.olehbohatyi.mep.config.*
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.kafka.KafkaContainer
 import org.testcontainers.postgresql.PostgreSQLContainer
+import com.github.olehbohatyi.mep.testkit.TestKafka
 
 // Throwaway infrastructure for integration tests (same images as docker-compose)
 object Containers:
@@ -26,9 +27,9 @@ object Containers:
       started(RedisContainer().withExposedPorts(6379)).map(c => RedisConfig(c.getHost, c.getMappedPort(6379)))
     )
 
-  val topics: TopicsConfig = TopicsConfig("raw", "enriched", "hazards", "signs", "traffic")
-
+  // Auto-create is off, as in docker-compose: topics must come from TopicBootstrap
   val kafka: ZLayer[Any, Throwable, KafkaConfig] =
     ZLayer.scoped(
-      started(KafkaContainer("apache/kafka:4.3.0")).map(c => KafkaConfig(c.getBootstrapServers, "mep-it", topics))
+      started(KafkaContainer("apache/kafka:4.3.0").withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "false"))
+        .map(c => TestKafka.config(servers = c.getBootstrapServers, group = "mep-it"))
     )
