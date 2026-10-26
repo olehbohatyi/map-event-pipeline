@@ -98,7 +98,7 @@ coordinates, e.g. `Kyiv City`, `Lviv Oblast`, `Autonomous Republic of Crimea`.
 | JDK | 27 (`stat` runs on 21) |
 | ZIO / zio-streams / zio-test | 2.1.27 |
 | zio-http · zio-kafka · zio-redis | 3.11.6 · 3.8.1 · 1.3.0 |
-| zio-json · zio-config · zio-logging | 1.1.1 · 4.1.0 · 2.5.3 |
+| zio-json · zio-schema · zio-config · zio-logging | 1.1.1 · 1.8.7 · 4.1.0 · 2.5.3 |
 | Quill (JDBC/ZIO) · Flyway · HikariCP | 4.8.6 · 13.11.1 · 7.1.0 |
 | Chimney | 2.1.0 |
 | Spark | 4.2.0 |
@@ -144,6 +144,22 @@ With the `redpanda` profile, the console is at `localhost:8081`.
 | `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Exact great-circle distance, nearest first, plus the region of the query point. |
 | `GET` | `/api/v1/stats` | Optional `region`. |
 | `GET` | `/api/v1/health` | Liveness. |
+| `GET` | `/docs/openapi` | Swagger UI over the generated OpenAPI 3.1 document. |
+
+Every error body is `{"error": "..."}`: `400` for invalid input (including unreadable JSON, an unknown enum value or a
+malformed query parameter) and `500` `{"error":"internal"}` for failures on our side.
+
+#### OpenAPI
+
+The endpoints are declared once, as zio-http `Endpoint`s in [`GateApi`](gate/src/main/scala/com/github/olehbohatyi/mep/gate/GateApi.scala);
+the routes are implemented from them and the OpenAPI document is generated from the same values, so the spec cannot
+drift from the code. zio-json still writes the bytes (absent optional fields stay omitted); zio-schema only describes
+them. [`OpenApiSpec`](gate/src/test/scala/com/github/olehbohatyi/mep/gate/OpenApiSpec.scala) compares the generated
+document with the committed `gate/src/test/resources/openapi.json`, so API changes show up in review. After an intended
+change run `UPDATE_OPENAPI=1 sbt "gate/testOnly *OpenApiSpec"` and commit the file.
+
+Swagger UI loads its JavaScript and CSS from `unpkg.com`, so the docs page needs internet access in the browser (the API
+itself does not).
 
 ## Build and test
 
