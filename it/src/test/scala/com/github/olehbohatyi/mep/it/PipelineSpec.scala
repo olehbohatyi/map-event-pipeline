@@ -7,7 +7,7 @@ import zio.kafka.serde.Serde
 import zio.redis.Redis
 import zio.test.*
 
-import com.github.olehbohatyi.mep.broker.{ EventCodec, ProducerService }
+import com.github.olehbohatyi.mep.broker.{ EventCodec, ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.*
 import com.github.olehbohatyi.mep.config.*
 import com.github.olehbohatyi.mep.domain.*
@@ -36,8 +36,28 @@ object PipelineSpec extends ZIOSpecDefault:
         .map(_.flatMap(r => EventCodec.decode(r.value).toOption))
     }
 
+  // Raw records with their headers, e.g. what landed on the dead-letter topic
+  private def readRaw(cfg: KafkaConfig, topic: String, n: Int): Task[Chunk[(String, Map[String, String])]] =
+    ZIO.scoped {
+      Consumer
+        .make(
+          ConsumerSettings(cfg.servers)
+            .withGroupId(s"reader-raw-$topic")
+            .withOffsetRetrieval(Consumer.OffsetRetrieval.Auto(Consumer.AutoOffsetStrategy.Earliest))
+        )
+        .flatMap(_.plainStream(Subscription.topics(topic), Serde.string, Serde.string).take(n.toLong).runCollect)
+        .map(_.map { r =>
+          r.value -> r
+            .record
+            .headers
+            .toArray
+            .map(h => h.key -> String(h.value, java.nio.charset.StandardCharsets.UTF_8))
+            .toMap
+        })
+    }
+
   def spec = (suite("Pipeline")(
-    test("an ingested event is enriched, stored and routed; malformed records are skipped") {
+    test("an ingested event is enriched, stored and routed; malformed records go to the DLQ") {
       for
         cfg       <- ZIO.service[KafkaConfig]
         processor <- ZIO.serviceWithZIO[StreamProcessor](_.run).fork
@@ -54,6 +74,7 @@ object PipelineSpec extends ZIOSpecDefault:
         repo      <- ZIO.service[EventRepo]
         stored    <- eventually(repo.findById(id))
         hazards   <- readTopic(cfg, cfg.topics.hazards, 1).timeoutFail(RuntimeException("no hazard event"))(60.seconds)
+        dlq       <- readRaw(cfg, cfg.topics.dlq, 1).timeoutFail(RuntimeException("no dead letter"))(60.seconds)
         _         <- processor.interrupt
       yield assertTrue(
         first == IngestionResult.Accepted(id),
@@ -61,9 +82,15 @@ object PipelineSpec extends ZIOSpecDefault:
         stored.status == EventStatus.Enriched,
         stored.region.contains("zone_50_30"),
         hazards.map(_.id) == Chunk(id),
+        dlq.map(_._1) == Chunk("{oops"),
+        dlq.head._2(RecordHandler.Headers.SourceTopic) == cfg.topics.raw,
+        dlq.head._2(RecordHandler.Headers.Error).nonEmpty,
       )
     }
-  ) @@ TestAspect.beforeAll(Migrations.run.orDie) @@ TestAspect.withLiveClock @@ TestAspect.timeout(5.minutes))
+  ) @@ TestAspect.beforeAll(
+    Live.live(Migrations.run *> TopicBootstrap.run).orDie
+  ) @@ TestAspect.withLiveClock @@ TestAspect
+    .timeout(5.minutes))
     .provideShared(
       Containers.kafka,
       Containers.postgres,
@@ -87,5 +114,6 @@ object PipelineSpec extends ZIOSpecDefault:
       EnrichmentService.live,
       EscalationService.live,
       EventHandler.live,
+      RecordHandler.live,
       StreamProcessor.live,
     )
