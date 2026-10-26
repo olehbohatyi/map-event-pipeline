@@ -131,6 +131,33 @@ export SPARK_JAVA_HOME="$(cs java-home --jvm temurin:21)"
 mill fetches the Java 21 for `stat` by itself (`jvmId`). Versions live in both `project/Dependencies.scala` and
 `build.mill`; CI builds with both.
 
+### Everything CI runs
+
+```bash
+scripts/verify.sh           # formatting, compile, unit + integration tests, mill
+scripts/verify.sh --quick   # formatting, compile, unit tests
+```
+
+## Built with Claude Code
+
+This project is developed together with [Claude Code](https://claude.com/claude-code). The workflow is part of the
+repository, so it is reproducible rather than anecdotal:
+
+- **[`CLAUDE.md`](CLAUDE.md)** — the project brief Claude reads at the start of every session: commands, module
+  layout, conventions and the non-obvious constraints (Spark's Scala/JDK limits, Redis keyspaces, delivery semantics).
+- **`/verify`** ([`.claude/skills/verify`](.claude/skills/verify/SKILL.md)) — runs [`scripts/verify.sh`](scripts/verify.sh),
+  the same checks as CI, and reports failures with file:line references. Changes are verified before they are
+  committed, not after CI fails.
+- **scalafmt hook** ([`.claude/hooks/scalafmt.sh`](.claude/hooks/scalafmt.sh)) — formats every Scala file Claude edits
+  and feeds parse errors straight back, so formatting never reaches review.
+
+How the work is organised:
+
+- Each phase starts with a short spike that proves the risky parts (for example, that Spark 4.2 cannot load the
+  Scala 3.8+ standard library, which is why `stat` is pinned to Scala 3.7.4) before any code is written.
+- Features land as small Conventional Commits; every bug fix carries a regression test.
+- Each phase is a pull request with green CI before merge.
+
 ## Project layout
 
 ```
@@ -138,6 +165,8 @@ mill fetches the Java 21 for `stat` by itself (`jvmId`). Versions live in both `
 ├── build.mill, mill          mill build + launcher
 ├── Dockerfile                build stage + gate / pipe / stat targets
 ├── docker-compose.yml        infrastructure, apps, `stat` profile
+├── scripts/verify.sh         the checks CI runs
+├── CLAUDE.md, .claude/       Claude Code brief, /verify skill, scalafmt hook
 ├── core/src/main
 │   ├── resources/            application.conf, logback.xml, db/migration (Flyway)
 │   └── scala/…/mep/
