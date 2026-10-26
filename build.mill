@@ -14,6 +14,7 @@ object V {
   val zioHttp    = "3.11.6"
   val zioRedis   = "1.3.0"
   val zioJson    = "1.1.1"
+  val zioSchema  = "1.8.7"
   val zioLogging = "2.5.3"
   val quill      = "4.8.6"
   val postgres   = "42.7.14"
@@ -57,6 +58,8 @@ object core extends MepModule {
     mvn"dev.zio::zio-kafka:${V.zioKafka}",
     mvn"dev.zio::zio-redis:${V.zioRedis}",
     mvn"dev.zio::zio-json:${V.zioJson}",
+    mvn"dev.zio::zio-schema:${V.zioSchema}",
+    mvn"dev.zio::zio-schema-derivation:${V.zioSchema}",
     // Quill pulls zio-json 0.7 for JSON columns (unused here); it clashes with zio-json 1.x
     mvn"io.getquill::quill-jdbc-zio:${V.quill}".exclude("dev.zio" -> "zio-json_3"),
     mvn"org.postgresql:postgresql:${V.postgres}",

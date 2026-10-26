@@ -1,8 +1,9 @@
 package com.github.olehbohatyi.mep.domain
 
 import zio.json.JsonCodec
+import zio.schema.{ derived, Schema }
 
-final case class GeoPoint(lat: Double, lon: Double) derives JsonCodec
+final case class GeoPoint(lat: Double, lon: Double) derives JsonCodec, Schema
 
 object GeoPoint:
 
