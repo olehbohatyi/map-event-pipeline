@@ -44,6 +44,16 @@ object PostgresSpec extends ZIOSpecDefault:
         nearest <- repo.findNearby(center, 5, 1)
       yield assertTrue(within.map(_.id) == List(near.id, mid.id), nearest.map(_.id) == List(near.id))
     },
+    test("findNearby measures across the antimeridian, which a lat/lon box cannot") {
+      // ~1.1 km apart on the equator, on opposite sides of the 180° meridian
+      val west = Samples.event(location = GeoPoint(0.0, 179.995))
+      val east = Samples.event(location = GeoPoint(0.0, -179.995))
+      for
+        repo   <- ZIO.service[EventRepo]
+        _      <- repo.insert(west) *> repo.insert(east)
+        nearby <- repo.findNearby(GeoPoint(0.0, 179.999), 2, 10)
+      yield assertTrue(nearby.map(_.id).toSet == Set(west.id, east.id))
+    },
     test("stats are read per region from map_event_stats") {
       for
         _      <- exec(

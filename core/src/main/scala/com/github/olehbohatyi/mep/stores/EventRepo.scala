@@ -48,9 +48,6 @@ trait EventRepo:
 
 object EventRepo:
 
-  // Upper bound of rows fetched from the bounding box before the exact distance filter
-  private val MaxCandidates = 5000
-
   val live: URLayer[DataSource, EventRepo] =
     ZLayer.fromFunction(EventRepoLive(_))
 
@@ -73,40 +70,19 @@ object EventRepo:
         .map(_.headOption.map(MapEventRow.toDomain))
         .provideEnvironment(env)
 
+    // PostGIS answers from the GiST index on the geography column (generated from lat/lon, see V2): exact
+    // great-circle distance in metres, nearest first, correct across the poles and the antimeridian
     def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[List[MapEvent]] =
-      val box = BoundingBox.around(center, radiusKm)
+      val lat    = center.lat
+      val lon    = center.lon
+      val meters = radiusKm * 1000
       run(
         events
-          .filter(r =>
-            r.lat >= lift(box.minLat) && r.lat <= lift(box.maxLat) &&
-            r.lon >= lift(box.minLon) && r.lon <= lift(box.maxLon)
+          .filter(_ =>
+            sql"ST_DWithin(geog, ST_SetSRID(ST_MakePoint(${lift(lon)}, ${lift(lat)}), 4326)::geography, ${lift(meters)})".asCondition
           )
-          .take(lift(MaxCandidates))
+          .sortBy(_ => sql"geog <-> ST_SetSRID(ST_MakePoint(${lift(lon)}, ${lift(lat)}), 4326)::geography".as[Double])
+          .take(lift(limit))
       )
-        .map(
-          _.map(MapEventRow.toDomain)
-            .map(e => e -> GeoPoint.distanceKm(center, e.location))
-            .filter(_._2 <= radiusKm)
-            .sortBy(_._2)
-            .take(limit)
-            .map(_._1)
-        )
+        .map(_.map(MapEventRow.toDomain))
         .provideEnvironment(env)
-
-// Lat/lon box enclosing a circle; the lon span widens with latitude
-final case class BoundingBox(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double)
-
-object BoundingBox:
-
-  private val KmPerDegree = 111.32
-
-  def around(center: GeoPoint, radiusKm: Double): BoundingBox =
-    val dLat   = radiusKm / KmPerDegree
-    val cosLat = math.cos(math.toRadians(center.lat))
-    val dLon   = if cosLat < 1e-6 then 180.0 else math.min(180.0, radiusKm / (KmPerDegree * cosLat))
-    BoundingBox(
-      minLat = math.max(-90.0, center.lat - dLat),
-      maxLat = math.min(90.0, center.lat + dLat),
-      minLon = center.lon - dLon,
-      maxLon = center.lon + dLon,
-    )
