@@ -61,6 +61,11 @@ in `application.conf`, and tolerates gate and pipe racing to create the same top
 All topics are keyed by event id (3 partitions by default; `KAFKA_REPLICATION_FACTOR` overrides the replication
 factor for multi-broker clusters).
 
+Existing topics are never altered: changing `topic-settings` only affects topics created afterwards. To change a
+live topic, use `kafka-topics.sh --alter` / `kafka-configs.sh` (or `rpk topic alter-config`). Settings the broker can
+never accept — `partitions = 0`, or a replication factor above the broker count — fail startup immediately with the
+broker's message instead of being retried.
+
 ## Tech stack
 
 | | Version |
