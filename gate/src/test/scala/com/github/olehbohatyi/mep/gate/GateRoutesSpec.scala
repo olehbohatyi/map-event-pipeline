@@ -90,8 +90,34 @@ object GateRoutesSpec extends ZIOSpecDefault:
         limit   <- call(get("/api/v1/events/nearby?lat=1&lon=1&limit=0"))
       yield assertTrue(
         List(missing, badLat, badNum, radius, limit).forall(_._1 == Status.BadRequest),
-        missing._2.contains("lat is required"),
+        missing._2.contains("Missing query parameters lat"),
+        badNum._2.startsWith("{\"error\":"),
+        badLat._2 == """{"error":"lat must be within [-90, 90]"}""",
       )
+    },
+    test("keeps the established JSON shape: absent optionals (here the region) are omitted, enums are plain strings") {
+      call(get("/api/v1/events/nearby?lat=50.45&lon=30.52")).map { (_, b) =>
+        val event = zio.json.ast.Json.decoder.decodeJson(b).toOption.get
+        val first = event.asObject.flatMap(_.get("events")).flatMap(_.asArray).flatMap(_.headOption).flatMap(_.asObject)
+        assertTrue(
+          first.exists(!_.contains("region")),
+          first.flatMap(_.get("eventType")).contains(zio.json.ast.Json.Str("Hazard")),
+        )
+      }
+    },
+    test("rewrites unreadable requests to the {\"error\": ...} shape") {
+      for
+        badEnum <- call(Request.post(URL(Path.decode("/api/v1/events")), Body.fromString("""{"eventType":"Meteor"}""")))
+        badJson <- call(Request.post(URL(Path.decode("/api/v1/events")), Body.fromString("{oops")))
+      yield assertTrue(
+        badEnum._1 == Status.BadRequest,
+        badJson._1 == Status.BadRequest,
+        badEnum._2.startsWith("{\"error\":\"invalid request:"),
+        badJson._2.startsWith("{\"error\":\"invalid request:"),
+      )
+    },
+    test("serves the Swagger UI over the OpenAPI document") {
+      call(get("/docs/openapi")).map((s, b) => assertTrue(s == Status.Ok, b.contains("SwaggerUI")))
     },
     test("stats by region") {
       call(get("/api/v1/stats?region=zone_1_2"))

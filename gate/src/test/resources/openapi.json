@@ -1,0 +1,464 @@
+{
+  "components" : {
+    "schemas" : {
+      "BadRequest" : {
+        "properties" : {
+          "error" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "error"
+        ],
+        "type" : "object"
+      },
+      "EventRequest" : {
+        "properties" : {
+          "description" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "eventType" : {
+            "$ref" : "#/components/schemas/EventType"
+          },
+          "location" : {
+            "$ref" : "#/components/schemas/GeoPoint"
+          },
+          "occurredAt" : {
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "severity" : {
+            "$ref" : "#/components/schemas/Severity"
+          }
+        },
+        "required" : [
+          "eventType",
+          "severity",
+          "location"
+        ],
+        "type" : "object"
+      },
+      "EventStatus" : {
+        "enum" : [
+          "Raw",
+          "Enriched",
+          "Archived"
+        ],
+        "type" : "string"
+      },
+      "EventType" : {
+        "enum" : [
+          "Hazard",
+          "Sign",
+          "Traffic"
+        ],
+        "type" : "string"
+      },
+      "GeoPoint" : {
+        "properties" : {
+          "lat" : {
+            "format" : "double",
+            "type" : "number"
+          },
+          "lon" : {
+            "format" : "double",
+            "type" : "number"
+          }
+        },
+        "required" : [
+          "lat",
+          "lon"
+        ],
+        "type" : "object"
+      },
+      "IngestAccepted" : {
+        "properties" : {
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "id",
+          "status"
+        ],
+        "type" : "object"
+      },
+      "IngestDuplicate" : {
+        "properties" : {
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "id",
+          "status"
+        ],
+        "type" : "object"
+      },
+      "Internal" : {
+        "properties" : {
+          "error" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "error"
+        ],
+        "type" : "object"
+      },
+      "MapEvent" : {
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "description" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "eventType" : {
+            "$ref" : "#/components/schemas/EventType"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "location" : {
+            "$ref" : "#/components/schemas/GeoPoint"
+          },
+          "occurredAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "region" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "severity" : {
+            "$ref" : "#/components/schemas/Severity"
+          },
+          "status" : {
+            "$ref" : "#/components/schemas/EventStatus"
+          }
+        },
+        "required" : [
+          "id",
+          "eventType",
+          "severity",
+          "status",
+          "location",
+          "occurredAt",
+          "createdAt"
+        ],
+        "type" : "object"
+      },
+      "MapEventStat" : {
+        "properties" : {
+          "count" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "eventType" : {
+            "$ref" : "#/components/schemas/EventType"
+          },
+          "region" : {
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "region",
+          "eventType",
+          "count",
+          "updatedAt"
+        ],
+        "type" : "object"
+      },
+      "NearbyResponse" : {
+        "properties" : {
+          "count" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "events" : {
+            "items" : {
+              "$ref" : "#/components/schemas/MapEvent"
+            },
+            "type" : "array"
+          },
+          "region" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "region",
+          "count",
+          "events"
+        ],
+        "type" : "object"
+      },
+      "Severity" : {
+        "enum" : [
+          "Low",
+          "Medium",
+          "High",
+          "Critical"
+        ],
+        "type" : "string"
+      },
+      "StatsResponse" : {
+        "properties" : {
+          "region" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "stats" : {
+            "items" : {
+              "$ref" : "#/components/schemas/MapEventStat"
+            },
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "stats"
+        ],
+        "type" : "object"
+      }
+    }
+  },
+  "info" : {
+    "title" : "Map Event Pipeline API",
+    "version" : "1.0.0"
+  },
+  "openapi" : "3.1.0",
+  "paths" : {
+    "/api/v1/events" : {
+      "post" : {
+        "parameters" : [
+          {
+            "in" : "header",
+            "name" : "idempotency-Key",
+            "schema" : {
+              "type" : [
+                "string",
+                "null"
+              ]
+            },
+            "style" : "simple"
+          }
+        ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/EventRequest",
+                "description" : "The road event to publish.\n\n"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/IngestDuplicate",
+                  "description" : "The Idempotency-Key was seen before; nothing was published.\n\n"
+                }
+              }
+            },
+            "description" : "The Idempotency-Key was seen before; nothing was published.\n\n"
+          },
+          "202" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/IngestAccepted",
+                  "description" : "The event was published to Kafka.\n\n"
+                }
+              }
+            },
+            "description" : "The event was published to Kafka.\n\n"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/nearby" : {
+      "get" : {
+        "parameters" : [
+          {
+            "allowReserved" : false,
+            "description" : "Latitude of the centre, within [-90, 90].\n\n",
+            "in" : "query",
+            "name" : "lat",
+            "required" : true,
+            "schema" : {
+              "format" : "double",
+              "type" : "number"
+            },
+            "style" : "form"
+          },
+          {
+            "allowReserved" : false,
+            "description" : "Longitude of the centre, within [-180, 180].\n\n",
+            "in" : "query",
+            "name" : "lon",
+            "required" : true,
+            "schema" : {
+              "format" : "double",
+              "type" : "number"
+            },
+            "style" : "form"
+          },
+          {
+            "allowReserved" : false,
+            "description" : "Radius in km, within (0, 100]; default 5.\n\n",
+            "in" : "query",
+            "name" : "radius",
+            "schema" : {
+              "format" : "double",
+              "type" : "number"
+            },
+            "style" : "form"
+          },
+          {
+            "allowReserved" : false,
+            "description" : "Maximum number of events, within [1, 500]; default 50.\n\n",
+            "in" : "query",
+            "name" : "limit",
+            "schema" : {
+              "format" : "int32",
+              "type" : "integer"
+            },
+            "style" : "form"
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/NearbyResponse"
+                }
+              }
+            },
+            "description" : "Events around the point, closest first, and the region the point is in.\n\n"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health" : {
+      "get" : {
+        "responses" : {
+          "200" : {
+            "content" : {
+              "text/plain" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            },
+            "description" : "Liveness probe; always `OK`.\n\n"
+          }
+        }
+      }
+    },
+    "/api/v1/stats" : {
+      "get" : {
+        "parameters" : [
+          {
+            "allowReserved" : false,
+            "description" : "Only this region; all regions when absent.\n\n",
+            "in" : "query",
+            "name" : "region",
+            "schema" : {
+              "type" : "string"
+            },
+            "style" : "form"
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/StatsResponse"
+                }
+              }
+            },
+            "description" : "Event counts per region and type, as aggregated by the stat job.\n\n"
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
