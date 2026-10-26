@@ -84,7 +84,8 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Topics are created by the apps (TopicBootstrap) with explicit partitions and retention
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
     volumes:
@@ -114,6 +115,7 @@ services:
       - --memory 512M
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr internal://broker:9092,external://localhost:${REDPANDA_PORT}
+      - --set redpanda.auto_create_topics_enabled=false
     ports:
       - "${REDPANDA_PORT}:19092"
     volumes:
