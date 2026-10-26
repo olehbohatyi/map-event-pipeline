@@ -1,6 +1,7 @@
 package com.github.olehbohatyi.mep.gate
 
 import zio.json.*
+import zio.schema.{ derived, Schema }
 
 import java.time.Instant
 import java.util.UUID
@@ -9,6 +10,7 @@ import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.stores.MapEventStat
 
 // ── HTTP request/response DTOs ───────────────────────────────────────────────
+// zio-json writes the bytes (so `None` fields stay omitted); zio-schema only describes them for the OpenAPI spec.
 
 final case class EventRequest(
     eventType: EventType,
@@ -16,12 +18,23 @@ final case class EventRequest(
     location: GeoPoint,
     description: Option[String],
     occurredAt: Option[Instant],
-  ) derives JsonDecoder
+  ) derives JsonCodec,
+      Schema
 
-final case class IngestResponse(id: UUID, status: String) derives JsonEncoder
+// 202: first time this event (or Idempotency-Key) is seen
+final case class IngestAccepted(id: UUID, status: String) derives JsonCodec, Schema
 
-final case class NearbyResponse(region: String, count: Int, events: List[MapEvent]) derives JsonEncoder
+// 200: the Idempotency-Key was already used, nothing was published again
+final case class IngestDuplicate(id: UUID, status: String) derives JsonCodec, Schema
 
-final case class StatsResponse(region: Option[String], stats: List[MapEventStat]) derives JsonEncoder
+final case class NearbyResponse(region: String, count: Int, events: List[MapEvent]) derives JsonCodec, Schema
 
-final case class ErrorResponse(error: String) derives JsonEncoder
+final case class StatsResponse(region: Option[String], stats: List[MapEventStat]) derives JsonCodec, Schema
+
+// Every error body is `{"error": "..."}`; the subtype only picks the status code
+sealed trait ApiError:
+  def error: String
+
+object ApiError:
+  final case class BadRequest(error: String) extends ApiError derives JsonCodec, Schema
+  final case class Internal(error: String)   extends ApiError derives JsonCodec, Schema

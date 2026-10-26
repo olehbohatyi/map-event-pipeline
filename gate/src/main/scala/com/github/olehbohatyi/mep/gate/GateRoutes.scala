@@ -2,6 +2,8 @@ package com.github.olehbohatyi.mep.gate
 
 import zio.*
 import zio.http.*
+import zio.http.codec.PathCodec
+import zio.http.endpoint.openapi.SwaggerUI
 import zio.json.*
 
 import com.github.olehbohatyi.mep.domain.GeoPoint
@@ -12,68 +14,81 @@ object GateRoutes:
   // GET  /api/v1/events/nearby — events around lat/lon within radius (km)
   // GET  /api/v1/stats         — aggregated counts, optionally ?region=
   // GET  /api/v1/health        — liveness probe
+  // GET  /docs/openapi         — Swagger UI over the generated OpenAPI document (assets come from unpkg.com)
 
   private val MaxRadiusKm = 100.0
   private val MaxLimit    = 500
 
   def apply(ingestion: IngestionService, query: QueryService): Routes[Any, Nothing] =
+    api(ingestion, query) ++ SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity)
+
+  // The API routes alone, without the docs; request-decoding failures are reported as `{"error": ...}` like all others
+  def api(ingestion: IngestionService, query: QueryService): Routes[Any, Nothing] =
     Routes(
-      Method.GET / "api" / "v1" / "health"            -> handler(Response.text("OK")),
-      Method.POST / "api" / "v1" / "events"           -> handler((req: Request) => postEvent(ingestion, req)),
-      Method.GET / "api" / "v1" / "events" / "nearby" -> handler((req: Request) => getNearby(query, req)),
-      Method.GET / "api" / "v1" / "stats"             -> handler((req: Request) => getStats(query, req)),
-    )
+      GateApi.health.implement(_ => ZIO.succeed("OK")),
+      GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key)),
+      GateApi.nearby.implement((lat, lon, radius, limit) => getNearby(query, lat, lon, radius, limit)),
+      GateApi.stats.implement(region => getStats(query, region)),
+    ).transform(_.mapZIO(normalizeDecodeError))
+
+  private def internal(op: String)(err: Throwable): UIO[ApiError.Internal] =
+    ZIO.logErrorCause(s"$op failed", Cause.fail(err)).as(ApiError.Internal("internal"))
+
+  private def postEvent(
+      ingestion: IngestionService,
+      req: EventRequest,
+      idempotencyKey: Option[String],
+    ): IO[ApiError, Either[IngestDuplicate, IngestAccepted]] =
+    ingestion
+      .ingest(req, idempotencyKey.map(_.trim).filter(_.nonEmpty))
+      .mapBoth(
+        err => err,
+        {
+          case IngestionResult.Accepted(id)  => Right(IngestAccepted(id, "accepted"))
+          case IngestionResult.Duplicate(id) => Left(IngestDuplicate(id, "duplicate"))
+        },
+      )
+      .tapError(err => internal("ingest")(err).unit)
+      .mapError(_ => ApiError.Internal("internal"))
+
+  private def getNearby(
+      query: QueryService,
+      lat: Double,
+      lon: Double,
+      radius: Option[Double],
+      limit: Option[Int],
+    ): IO[ApiError, NearbyResponse] =
+    val r       = radius.getOrElse(5.0)
+    val l       = limit.getOrElse(50)
+    val invalid =
+      if lat < -90 || lat > 90 then Some("lat must be within [-90, 90]")
+      else if lon < -180 || lon > 180 then Some("lon must be within [-180, 180]")
+      else if !(r > 0 && r <= MaxRadiusKm) then Some(s"radius must be within (0, $MaxRadiusKm]")
+      else if l <= 0 || l > MaxLimit then Some(s"limit must be within [1, $MaxLimit]")
+      else None
+    invalid match
+      case Some(msg) => ZIO.fail(ApiError.BadRequest(msg))
+      case None      => query.findNearby(GeoPoint(lat, lon), r, l).catchAll(internalFail("nearby query"))
+
+  private def getStats(query: QueryService, region: Option[String]): IO[ApiError.Internal, StatsResponse] =
+    val filter = region.filter(_.nonEmpty)
+    query.stats(filter).map(StatsResponse(filter, _)).catchAll(internalFail("stats query"))
+
+  private def internalFail(op: String)(err: Throwable): IO[ApiError.Internal, Nothing] =
+    internal(op)(err).flatMap(ZIO.fail(_))
+
+  // zio-http reports undecodable input (bad JSON, unknown enum value, missing/malformed query parameter) as
+  // `{"name": ..., "message": ...}`; clients only ever see the `{"error": ...}` shape
+  private def normalizeDecodeError(res: Response): UIO[Response] =
+    if res.status != Status.BadRequest then ZIO.succeed(res)
+    else
+      ZIO.scoped(res.body.asString.orElseSucceed("")).map { body =>
+        body.fromJson[DecodeFailure] match
+          case Right(failure) => json(Status.BadRequest, ApiError.BadRequest(s"invalid request: ${failure.message}"))
+          case Left(_)        => res.copy(body = Body.fromString(body))
+      }
+
+  final private case class DecodeFailure(name: String, message: String) derives JsonDecoder
 
   private def json[A: JsonEncoder](status: Status, body: A): Response =
     Response.json(body.toJson).status(status)
-
-  private def badRequest(msg: String): Response = json(Status.BadRequest, ErrorResponse(msg))
-
-  private def internal(op: String)(err: Throwable): UIO[Response] =
-    ZIO.logErrorCause(s"$op failed", Cause.fail(err)).as(json(Status.InternalServerError, ErrorResponse("internal")))
-
-  private def postEvent(ingestion: IngestionService, req: Request): UIO[Response] =
-    req
-      .body
-      .asString
-      .map(_.fromJson[EventRequest])
-      .flatMap {
-        case Left(err) => ZIO.succeed(badRequest(s"invalid body: $err"))
-        case Right(r)  =>
-          val key = req.rawHeader("Idempotency-Key").map(_.trim).filter(_.nonEmpty)
-          ingestion.ingest(r, key).map {
-            case IngestionResult.Accepted(id)  => json(Status.Accepted, IngestResponse(id, "accepted"))
-            case IngestionResult.Duplicate(id) => json(Status.Ok, IngestResponse(id, "duplicate"))
-          }
-      }
-      .catchAll(internal("ingest"))
-
-  private def getNearby(query: QueryService, req: Request): UIO[Response] =
-    nearbyParams(req) match
-      case Left(msg)                      => ZIO.succeed(badRequest(msg))
-      case Right((center, radius, limit)) =>
-        query.findNearby(center, radius, limit).map(json(Status.Ok, _)).catchAll(internal("nearby query"))
-
-  private def getStats(query: QueryService, req: Request): UIO[Response] =
-    val region = req.queryParam("region").filter(_.nonEmpty)
-    query.stats(region).map(s => json(Status.Ok, StatsResponse(region, s))).catchAll(internal("stats query"))
-
-  private def nearbyParams(req: Request): Either[String, (GeoPoint, Double, Int)] =
-    def double(name: String): Either[String, Option[Double]] =
-      req.queryParam(name) match
-        case None    => Right(None)
-        case Some(v) => v.toDoubleOption.toRight(s"$name must be a number").map(Some(_))
-    def int(name: String): Either[String, Option[Int]]       =
-      req.queryParam(name) match
-        case None    => Right(None)
-        case Some(v) => v.toIntOption.toRight(s"$name must be an integer").map(Some(_))
-    for
-      lat    <- double("lat").flatMap(_.toRight("lat is required"))
-      lon    <- double("lon").flatMap(_.toRight("lon is required"))
-      radius <- double("radius").map(_.getOrElse(5.0))
-      limit  <- int("limit").map(_.getOrElse(50))
-      _      <- Either.cond(lat >= -90 && lat <= 90, (), "lat must be within [-90, 90]")
-      _      <- Either.cond(lon >= -180 && lon <= 180, (), "lon must be within [-180, 180]")
-      _      <- Either.cond(radius > 0 && radius <= MaxRadiusKm, (), s"radius must be within (0, $MaxRadiusKm]")
-      _      <- Either.cond(limit > 0 && limit <= MaxLimit, (), s"limit must be within [1, $MaxLimit]")
-    yield (GeoPoint(lat, lon), radius, limit)
