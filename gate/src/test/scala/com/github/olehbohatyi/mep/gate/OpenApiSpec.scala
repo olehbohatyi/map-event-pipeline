@@ -9,7 +9,7 @@ import java.nio.file.{ Files, Path }
 
 /** Contract test: the generated OpenAPI document must equal `src/test/resources/openapi.json`, so any change to the API
   * surface shows up as a reviewable diff. After an intended change regenerate the file with
-  * `UPDATE_OPENAPI=1 sbt "gate/testOnly *OpenApiSpec"`.
+  * `UPDATE_OPENAPI=1 sbt -batch --server "gate/testOnly *OpenApiSpec"`.
   */
 object OpenApiSpec extends ZIOSpecDefault:
 

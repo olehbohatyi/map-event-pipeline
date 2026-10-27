@@ -105,7 +105,7 @@ coordinates, e.g. `Kyiv City`, `Lviv Oblast`, `Autonomous Republic of Crimea`.
 | Testcontainers | 2.0.5 |
 | PostgreSQL + PostGIS · Redis | 18.6 + 3.6.4 (`postgis/postgis:18-3.6-alpine`, pinned by digest) · 8.6.3 |
 | Apache Kafka (KRaft) · Redpanda | 4.3.0 · v26.1.9 |
-| sbt · mill | 1.13.0 · 1.3.1 |
+| sbt · mill | 2.0.11 · 1.3.1 |
 
 **Why `stat` is different:** Spark 4.x links against the Scala 2.13 standard library. From Scala 3.8 on, the standard
 library is compiled by Scala 3, and Spark's runtime reflection fails on it. Spark also does not run on JDK 24+. So
@@ -157,7 +157,7 @@ the routes are implemented from them and the OpenAPI document is generated from 
 drift from the code. zio-json still writes the bytes (absent optional fields stay omitted); zio-schema only describes
 them. [`OpenApiSpec`](gate/src/test/scala/com/github/olehbohatyi/mep/gate/OpenApiSpec.scala) compares the generated
 document with the committed `gate/src/test/resources/openapi.json`, so API changes show up in review. After an intended
-change run `UPDATE_OPENAPI=1 sbt "gate/testOnly *OpenApiSpec"` and commit the file.
+change run `UPDATE_OPENAPI=1 sbt -batch --server "gate/testOnly *OpenApiSpec"` and commit the file.
 
 Swagger UI loads its JavaScript and CSS from `unpkg.com`, so the docs page needs internet access in the browser (the API
 itself does not).
@@ -168,12 +168,17 @@ itself does not).
 
 ```bash
 sbt compile
-sbt test                    # unit tests; no Docker needed
+sbt testFull                # unit tests; no Docker needed (`sbt test` is cached and skips unchanged suites)
 sbt itTest                  # integration tests; needs Docker
 sbt check                   # formatting + compile + unit tests (what CI runs)
 sbt fmt                     # format everything
 sbt gate/run                # needs the infrastructure from docker compose
 ```
+
+The build runs on sbt 2. A plain `sbt` command is handed to a background sbt server, which keeps the environment it
+was started with; when an environment variable matters (`SPARK_JAVA_HOME`, `UPDATE_OPENAPI`), run
+`sbt -batch --server …` so the build runs in a fresh JVM with your current environment. `scripts/verify.sh` and CI do
+that.
 
 `stat`'s tests and `stat/run` fork the JDK at `SPARK_JAVA_HOME` (a Java 21). Without it they use the current JDK,
 and Spark fails on 24+:

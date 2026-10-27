@@ -10,7 +10,7 @@ API and delivery guarantees.
 scripts/verify.sh --quick   # what to run while iterating: scalafmt check, compile, unit tests
 scripts/verify.sh           # everything CI runs: + Testcontainers integration tests + mill build (/verify)
 sbt fmt                     # format everything (never hand-format)
-sbt "gate/testOnly *GateRoutesSpec"   # one spec
+sbt -batch --server "gate/testOnly *GateRoutesSpec"   # one spec
 sbt itTest                  # integration tests only; needs Docker
 docker compose up -d --build          # full stack (cp .env.example .env first)
 ```
@@ -36,6 +36,13 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - Versions live in **both** `project/Dependencies.scala` and `build.mill`; change them together.
 
 ## Gotchas
+
+- sbt 2: run it as `sbt -batch --server …` so it uses this shell's environment; plain `sbt` hands the commands to a
+  background server that keeps the environment it was started with (a server started without `SPARK_JAVA_HOME` runs
+  the Spark tests on JDK 27 and they fail). `test` is cached and skips unchanged suites, so the aliases use
+  `testFull`. Several commands go in one `;`-separated argument (`"gate/stage; pipe/stage"`). Output lives under
+  `target/out/jvm/scala-<version>/<project>/` (the Dockerfile copies from there). Write settings out per project: a
+  shared helper taking parameters is evaluated once, so a second project silently gets the first one's values.
 
 - Spark 4.x links against the Scala 2.13 stdlib and cannot run on Scala ≥ 3.8 or JDK ≥ 24. `stat` stays on
   Scala 3.7.4 (line marked `scala-steward:off`), compiles with `-release 21`, uses only the DataFrame API
@@ -63,8 +70,8 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - The gate API is declared as zio-http `Endpoint`s in `GateApi`; routes and the OpenAPI document both come from them.
   zio-json writes the bytes (wire format: enums as plain strings, `None` omitted), zio-schema (`derives Schema`, enums
   need `@simpleEnum`) only feeds the spec. Changing the API means regenerating the golden file:
-  `UPDATE_OPENAPI=1 sbt "gate/testOnly *OpenApiSpec"`. zio-http's own decode errors are encoded as `{"error": ...}`
-  (`GateApi.invalidRequest` replaces its Accept-negotiated HTML/JSON default; every endpoint needs
+  `UPDATE_OPENAPI=1 sbt -batch --server "gate/testOnly *OpenApiSpec"`. zio-http's own decode errors are encoded as
+  `{"error": ...}` (`GateApi.invalidRequest` replaces its Accept-negotiated HTML/JSON default; every endpoint needs
   `.invalidRequestAsJson`, a test checks it), and request bodies are read as JSON whatever `Content-Type` says
   (`GateRoutes.readBodyAsJson`), as before the Endpoint API.
 - Inside compose the apps reach Kafka as `broker:9092` (network alias of both broker profiles); from the host it is
