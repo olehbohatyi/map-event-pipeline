@@ -4,7 +4,8 @@ import zio.*
 import zio.http.*
 import zio.http.codec.*
 import zio.http.endpoint.*
-import zio.http.endpoint.openapi.{ OpenAPI, OpenAPIGen }
+import zio.http.endpoint.openapi.{ JsonSchema, OpenAPI, OpenAPIGen }
+import zio.http.endpoint.openapi.JsonSchema.{ SchemaRef, SchemaSpec, SchemaStyle }
 import zio.json.{ JsonCodec, JsonDecoder, JsonEncoder }
 import zio.schema.Schema
 import zio.schema.codec.{ BinaryCodec, DecodeError }
@@ -80,6 +81,34 @@ object GateApi:
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
 
+  val recent =
+    Endpoint(Method.GET / "api" / "v1" / "events" / "recent")
+      .query(
+        QueryCodec.query[Int]("limit").optional ?? Doc.p("Maximum number of events, within [1, 500]; default 200.")
+      )
+      .out[RecentResponse](Doc.p("The latest events by occurrence time, newest first."))
+      .invalidRequestAsJson
+      .outErrors[ApiError](
+        HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
+        HttpCodec.error[ApiError.Internal](Status.InternalServerError),
+      )
+
+  val live =
+    Endpoint(Method.GET / "api" / "v1" / "events" / "live")
+      .query(
+        QueryCodec.query[String]("bbox").optional ??
+          Doc.p("Only events inside `minLon,minLat,maxLon,maxLat`; all events when absent.")
+      )
+      .outStream[ServerSentEvent[String]](
+        Doc.p(
+          "Server-sent events, one per event the pipe finishes: `event: event`, `id: <event id>`, `data: <MapEvent " +
+            "JSON>`. A `:heartbeat` comment every 15 seconds keeps the connection open. Delivery is best effort: a " +
+            "client that falls far behind loses its oldest events, and the same event may arrive twice."
+        )
+      )
+      .invalidRequestAsJson
+      .outError[ApiError.BadRequest](Status.BadRequest)
+
   val stats =
     Endpoint(Method.GET / "api" / "v1" / "stats")
       .query(QueryCodec.query[String]("region").optional ?? Doc.p("Only this region; all regions when absent."))
@@ -87,13 +116,14 @@ object GateApi:
       .invalidRequestAsJson
       .outError[ApiError.Internal](Status.InternalServerError)
 
-  val endpoints = List(health, ingest, nearby, stats)
+  val endpoints = List(health, ingest, nearby, recent, live, stats)
 
-  val openApi: OpenAPI = OpenAPIGen.fromEndpoints(
-    "Map Event Pipeline API",
-    "1.0.0",
-    health,
-    ingest,
-    nearby,
-    stats,
-  )
+  val openApi: OpenAPI =
+    val generated = OpenAPIGen.fromEndpoints("Map Event Pipeline API", "1.0.0", endpoints.head, endpoints.tail*)
+    // The generator refers to a ServerSentEvent schema for the live stream but never writes one
+    val sse       = OpenAPI.Key.fromString("ServerSentEvent").get ->
+      OpenAPI
+        .ReferenceOr
+        .Or(JsonSchema.fromZSchema(ServerSentEvent.schema[String], SchemaRef(SchemaSpec.OpenAPI, SchemaStyle.Inline)))
+    val comps     = generated.components.getOrElse(OpenAPI.Components())
+    generated.copy(components = Some(comps.copy(schemas = comps.schemas + sse)))

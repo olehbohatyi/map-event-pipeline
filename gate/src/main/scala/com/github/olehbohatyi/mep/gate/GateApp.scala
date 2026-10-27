@@ -30,17 +30,22 @@ object GateApp extends ZIOAppDefault:
       RegionResolver.live,
       IngestionService.live,
       QueryService.live,
+      LiveFeed.live,
     )
 
-  private val program: RIO[IngestionService & QueryService & HttpConfig & KafkaConfig & DataSource, Unit] =
+  private val program: RIO[IngestionService & QueryService & LiveFeed & HttpConfig & KafkaConfig & DataSource, Unit] =
     for
       _         <- Migrations.run
       _         <- TopicBootstrap.run
       cfg       <- ZIO.service[HttpConfig]
       ingestion <- ZIO.service[IngestionService]
       query     <- ZIO.service[QueryService]
+      feed      <- ZIO.service[LiveFeed]
       _         <- ZIO.logInfo(s"Gate listening on ${cfg.host}:${cfg.port}")
+      // Ending the live streams first lets the server's graceful shutdown finish the remaining requests quickly;
+      // otherwise it waits out its timeout on the endless streams (and `docker stop` kills the gate meanwhile)
       _         <- Server
-                     .serve(GateRoutes(ingestion, query))
+                     .serve(GateRoutes(ingestion, query, feed))
+                     .onInterrupt(feed.close)
                      .provide(Server.defaultWith(_.binding(cfg.host, cfg.port)))
     yield ()
