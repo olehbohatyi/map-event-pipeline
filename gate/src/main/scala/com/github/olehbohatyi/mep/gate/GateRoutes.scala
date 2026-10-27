@@ -24,6 +24,8 @@ object GateRoutes:
   private val MaxLimit      = 500
   private val DefaultRecent = 200
   private val Heartbeat     = 15.seconds
+  // How far ahead of the gate's clock a client's occurredAt may be (clock drift), before it is rejected
+  private val MaxClockSkew  = 5.minutes
 
   def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
     api(ingestion, query, feed) ++
@@ -59,17 +61,27 @@ object GateRoutes:
       req: EventRequest,
       idempotencyKey: Option[String],
     ): IO[ApiError, Either[IngestDuplicate, IngestAccepted]] =
-    ingestion
-      .ingest(req, idempotencyKey.map(_.trim).filter(_.nonEmpty))
-      .mapBoth(
-        err => err,
-        {
-          case IngestionResult.Accepted(id)  => Right(IngestAccepted(id, "accepted"))
-          case IngestionResult.Duplicate(id) => Left(IngestDuplicate(id, "duplicate"))
-        },
-      )
-      .tapError(err => internal("ingest")(err).unit)
-      .mapError(_ => ApiError.Internal("internal"))
+    notInTheFuture(req) *>
+      ingestion
+        .ingest(req, idempotencyKey.map(_.trim).filter(_.nonEmpty))
+        .mapBoth(
+          err => err,
+          {
+            case IngestionResult.Accepted(id)  => Right(IngestAccepted(id, "accepted"))
+            case IngestionResult.Duplicate(id) => Left(IngestDuplicate(id, "duplicate"))
+          },
+        )
+        .tapError(err => internal("ingest")(err).unit)
+        .mapError(_ => ApiError.Internal("internal"))
+
+  // occurredAt is client input. A far-future one would sort first in /recent for good and never age off the map
+  private def notInTheFuture(req: EventRequest): IO[ApiError.BadRequest, Unit] =
+    Clock.instant.flatMap { now =>
+      ZIO
+        .fail(ApiError.BadRequest(s"occurredAt must not be more than ${MaxClockSkew.toMinutes} minutes in the future"))
+        .when(req.occurredAt.exists(_.isAfter(now.plus(MaxClockSkew))))
+        .unit
+    }
 
   private def getNearby(
       query: QueryService,
