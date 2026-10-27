@@ -87,13 +87,15 @@
       fillOpacity: 0.7,
       weight: fresh ? 3 : 1
     }).bindPopup(() => popup(e)).addTo(map);
-    markers.delete(e.id);
+    marker.occurredAt = Date.parse(e.occurredAt);
     markers.set(e.id, marker);
-    // Map keeps insertion order, so the first entry is the oldest
+    // Drop the events that occurred earliest. Not insertion order: after a reconnect, older events from /recent are
+    // added after newer live ones.
     while (markers.size > MaxMarkers) {
-      const [id, m] = markers.entries().next().value;
-      m.remove();
-      markers.delete(id);
+      let oldest = null;
+      for (const [id, m] of markers) if (oldest === null || m.occurredAt < markers.get(oldest).occurredAt) oldest = id;
+      markers.get(oldest).remove();
+      markers.delete(oldest);
     }
     document.getElementById("count").textContent = `${markers.size} events`;
   }
