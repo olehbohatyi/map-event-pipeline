@@ -45,6 +45,8 @@ trait EventRepo:
   def findById(id: UUID): Task[Option[MapEvent]]
   // Events within radiusKm of center, nearest first
   def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[List[MapEvent]]
+  // The latest events by occurrence time, newest first
+  def findRecent(limit: Int): Task[List[MapEvent]]
 
 object EventRepo:
 
@@ -84,5 +86,11 @@ object EventRepo:
           .sortBy(_ => sql"geog <-> ST_SetSRID(ST_MakePoint(${lift(lon)}, ${lift(lat)}), 4326)::geography".as[Double])
           .take(lift(limit))
       )
+        .map(_.map(MapEventRow.toDomain))
+        .provideEnvironment(env)
+
+    // Served by idx_map_events_occurred (occurred_at DESC, V1)
+    def findRecent(limit: Int): Task[List[MapEvent]] =
+      run(events.sortBy(_.occurredAt)(using Ord.desc).take(lift(limit)))
         .map(_.map(MapEventRow.toDomain))
         .provideEnvironment(env)

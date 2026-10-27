@@ -54,6 +54,16 @@ object PostgresSpec extends ZIOSpecDefault:
         nearby <- repo.findNearby(GeoPoint(0.0, 179.999), 2, 10)
       yield assertTrue(nearby.map(_.id).toSet == Set(west.id, east.id))
     },
+    test("findRecent returns the latest events by occurrence time, newest first") {
+      // Later than anything the other tests store, so these are the newest rows in the shared database
+      val at                   = (h: Int) => java.time.Instant.parse(s"2031-01-01T${"%02d".format(h)}:00:00Z")
+      val List(old, mid, last) = List(1, 2, 3).map(h => Samples.event().copy(occurredAt = at(h))): @unchecked
+      for
+        repo  <- ZIO.service[EventRepo]
+        _     <- ZIO.foreachDiscard(List(mid, last, old))(repo.insert)
+        found <- repo.findRecent(2)
+      yield assertTrue(found.map(_.id) == List(last.id, mid.id))
+    },
     test("stats are read per region from map_event_stats") {
       for
         _      <- exec(
