@@ -74,6 +74,12 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   `{"error": ...}` (`GateApi.invalidRequest` replaces its Accept-negotiated HTML/JSON default; every endpoint needs
   `.invalidRequestAsJson`, a test checks it), and request bodies are read as JSON whatever `Content-Type` says
   (`GateRoutes.readBodyAsJson`), as before the Endpoint API.
+- Live map: `LiveFeed` tails `map.events.enriched` with a random consumer group per gate instance (newest offset, no
+  commits) into a sliding `Hub`; never let a subscriber block the source. `GateApp` calls `feed.close` before the
+  server's graceful shutdown, or open SSE streams hold shutdown for its full timeout. zio-http's OpenAPI generator
+  omits the `ServerSentEvent` schema it refers to; `GateApi.openApi` adds it and `OpenApiSpec` checks every `$ref`.
+  Tests that read an SSE body subscribe first (`feed.subscribers`) and then publish; the map page builds popups with
+  `textContent` because `description` is user input.
 - Inside compose the apps reach Kafka as `broker:9092` (network alias of both broker profiles); from the host it is
   `localhost:${KAFKA_PORT}`.
 

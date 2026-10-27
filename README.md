@@ -9,12 +9,12 @@ and a Spark batch job aggregates per-region statistics that the gateway serves b
 ## Architecture
 
 ```
- clients
-    │  POST /api/v1/events            GET /api/v1/events/nearby, /api/v1/stats
+ clients                        browsers: /map (Leaflet) ◀── server-sent events
+    │  POST /api/v1/events            GET /api/v1/events/nearby, /recent, /live, /api/v1/stats
     ▼                                   ▲
-┌──────────┐  map.events.raw   ┌──────────┐   map.events.enriched
+┌──────────┐  map.events.raw   ┌──────────┐   map.events.enriched ──┐
 │   gate   │ ────────────────▶ │   pipe   │ ─▶ map.events.{hazards,signs,traffic}
-│ zio-http │                   │zio-kafka │
+│ zio-http │ ◀─────────────────┼──────────┼─────────────────────────┘ (tailed for the live map)
 └──────────┘                   └──────────┘
    │    ▲                         │    │
    │    │ map_events              │    └──────▶ PostgreSQL ◀──────┐
@@ -29,7 +29,7 @@ and a Spark batch job aggregates per-region statistics that the gateway serves b
 | Module | Role |
 |--------|------|
 | `core` | Domain model and JSON codecs, typed config, Postgres/PostGIS stores (Quill, Flyway, Chimney), Kafka producer, Redis caches, region resolution |
-| `gate` | HTTP API (zio-http): ingest events with optional idempotency, query nearby events and region stats |
+| `gate` | HTTP API (zio-http): ingest events with optional idempotency, query nearby/recent events and region stats, stream finished events to the live map (SSE) |
 | `pipe` | Kafka consumer (zio-kafka): dedup → enrich with the oblast → escalate severity → persist → publish to typed topics |
 | `stat` | Spark batch job: counts enriched events per region and type into `map_event_stats` |
 | `it`   | Integration tests against real Postgres, Redis and Kafka (Testcontainers) |
@@ -136,15 +136,39 @@ curl 'localhost:8080/api/v1/stats?region=Kyiv%20City'
 
 With the `redpanda` profile, the console is at `localhost:8081`.
 
+Open the live map at `localhost:8080/map`, then feed it:
+
+```bash
+scripts/demo.sh             # 50 random events around Ukrainian cities, one every 0.5 s
+```
+
+### Live map
+
+`/map` is a single page (Leaflet over OpenStreetMap tiles) that loads the latest events from `/api/v1/events/recent`
+and then follows `/api/v1/events/live`, a stream of server-sent events. Markers are coloured by severity; the popup
+shows type, region, description and time.
+
+- Each gate tails `map.events.enriched` (what the pipe publishes after storing an event) with its own consumer group
+  from the newest offset, so every gate instance sees every event and nothing is replayed or committed.
+- One consumer per gate feeds a sliding `Hub`; each browser has its own subscription. A slow or stalled browser loses
+  its oldest events instead of slowing Kafka or the other browsers (measured: five clients that never read, 4M events,
+  flat heap). Delivery is best effort and the pipe may publish an event twice, so the page keys markers by id.
+- On shutdown the gate ends the live streams before the HTTP server's graceful shutdown, which would otherwise wait
+  its full timeout on the endless streams. Browsers reconnect by themselves (`EventSource`).
+- Leaflet (pinned, with subresource integrity) and the map tiles load from the internet, like Swagger UI.
+
 ### API
 
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt`. Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `400` invalid. |
 | `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Exact great-circle distance, nearest first, plus the region of the query point. |
+| `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest events by occurrence time, newest first. |
+| `GET` | `/api/v1/events/live` | Server-sent events (`event: event`, `id`, `data: <MapEvent JSON>`), one per event the pipe finishes, plus a `:heartbeat` comment every 15 s. Optional `bbox=minLon,minLat,maxLon,maxLat`. |
 | `GET` | `/api/v1/stats` | Optional `region`. |
 | `GET` | `/api/v1/health` | Liveness. |
 | `GET` | `/docs/openapi` | Swagger UI over the generated OpenAPI 3.1 document. |
+| `GET` | `/map` | The live map. |
 
 Every error body is `{"error": "..."}`, whatever the client's `Accept` header asks for: `400` for invalid input
 (including unreadable JSON, an unknown enum value or a malformed query parameter) and `500` `{"error":"internal"}` for
