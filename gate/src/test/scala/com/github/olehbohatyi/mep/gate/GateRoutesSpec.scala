@@ -216,10 +216,21 @@ object GateRoutesSpec extends ZIOSpecDefault:
         )
       }
     },
-    test("serves the live map page") {
-      call(get("/map")).map((s, b) =>
-        assertTrue(s == Status.Ok, b.contains("new EventSource(\"/api/v1/events/live\")"))
-      )
+    test("serves the live map page as HTML") {
+      ZIO.scoped {
+        for
+          calls <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
+          res   <- GateRoutes(StubIngestion, StubQuery(calls), NoFeed).runZIO(get("/map"))
+          body  <- res.body.asString.orDie
+        yield assertTrue(
+          res.status == Status.Ok,
+          res.header(Header.ContentType).exists(_.mediaType == MediaType.text.html),
+          // Regression: jar entries carry a fixed 2010 timestamp, so without this browsers kept the page from an
+          // older build after a deploy (heuristic freshness from Last-Modified)
+          res.header(Header.CacheControl).contains(Header.CacheControl.NoStore),
+          body.contains("new EventSource(\"/api/v1/events/live\")"),
+        )
+      }
     },
     test("stats by region") {
       call(get("/api/v1/stats?region=zone_1_2"))
