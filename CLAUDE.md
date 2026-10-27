@@ -63,7 +63,10 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - The gate API is declared as zio-http `Endpoint`s in `GateApi`; routes and the OpenAPI document both come from them.
   zio-json writes the bytes (wire format: enums as plain strings, `None` omitted), zio-schema (`derives Schema`, enums
   need `@simpleEnum`) only feeds the spec. Changing the API means regenerating the golden file:
-  `UPDATE_OPENAPI=1 sbt "gate/testOnly *OpenApiSpec"`. zio-http's own decode errors are encoded as `{"error": ...}` (`GateApi.invalidRequest`, replacing its Accept-negotiated HTML/JSON default), and request bodies are read as JSON whatever `Content-Type` says (`GateRoutes.readBodyAsJson`), as before the Endpoint API.
+  `UPDATE_OPENAPI=1 sbt "gate/testOnly *OpenApiSpec"`. zio-http's own decode errors are encoded as `{"error": ...}`
+  (`GateApi.invalidRequest` replaces its Accept-negotiated HTML/JSON default; every endpoint needs
+  `.invalidRequestAsJson`, a test checks it), and request bodies are read as JSON whatever `Content-Type` says
+  (`GateRoutes.readBodyAsJson`), as before the Endpoint API.
 - Inside compose the apps reach Kafka as `broker:9092` (network alias of both broker profiles); from the host it is
   `localhost:${KAFKA_PORT}`.
 
