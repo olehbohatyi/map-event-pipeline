@@ -143,6 +143,10 @@ object GateRoutesSpec extends ZIOSpecDefault:
         List(badJson, badNum, missing).forall(_._2.startsWith("{\"error\":\"invalid request:")),
       )
     },
+    // Guards the wiring above for endpoints added later (`stats` has no input that can fail to decode)
+    test("every endpoint answers decode errors with the JSON codec") {
+      assertTrue(GateApi.endpoints.forall(_.codecError eq GateApi.invalidRequest))
+    },
     test("serves the Swagger UI over the OpenAPI document") {
       call(get("/docs/openapi")).map((s, b) => assertTrue(s == Status.Ok, b.contains("SwaggerUI")))
     },

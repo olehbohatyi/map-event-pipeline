@@ -41,7 +41,7 @@ object GateApi:
     * to browsers; this codec is JSON-only. It replaces the default rather than going in front of it (`outCodecError`),
     * since with `Accept: text/html` the HTML-capable default would still be chosen.
     */
-  private val invalidRequest: HttpCodec[HttpCodecType.ResponseType, HttpCodecError] =
+  private[gate] val invalidRequest: HttpCodec[HttpCodecType.ResponseType, HttpCodecError] =
     (HttpCodec.content[ApiError.BadRequest] ++ StatusCodec.BadRequest)
       .transform[HttpCodecError](bad => HttpCodecError.CustomError("InvalidRequest", bad.error))(err =>
         ApiError.BadRequest(s"invalid request: ${err.getMessage}")
@@ -53,6 +53,7 @@ object GateApi:
   val health =
     Endpoint(Method.GET / "api" / "v1" / "health")
       .out[String](MediaType.text.plain, Doc.p("Liveness probe; always `OK`."))
+      .invalidRequestAsJson
 
   val ingest =
     Endpoint(Method.POST / "api" / "v1" / "events")
