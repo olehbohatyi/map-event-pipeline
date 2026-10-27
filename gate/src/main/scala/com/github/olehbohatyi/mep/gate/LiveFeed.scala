@@ -16,7 +16,8 @@ final case class BoundingBox(minLon: Double, minLat: Double, maxLon: Double, max
 object BoundingBox:
 
   def parse(s: String): Either[String, BoundingBox] =
-    s.split(',').map(_.trim.toDoubleOption).toList match
+    // -1 keeps trailing empty fields, so "1,2,3,4," is five fields; NaN and infinities would pass every range check
+    s.split(",", -1).map(_.trim.toDoubleOption.filter(_.isFinite)).toList match
       case List(Some(minLon), Some(minLat), Some(maxLon), Some(maxLat)) =>
         val box = BoundingBox(minLon, minLat, maxLon, maxLat)
         if List(minLon, maxLon).exists(v => v < -180 || v > 180) then Left("bbox longitudes must be within [-180, 180]")
@@ -49,6 +50,7 @@ object LiveFeed:
     for
       hub   <- Hub.sliding[MapEvent](BufferSize)
       count <- Ref.make(0)
+      // Retries after 1, 2, 4, 8, 16 s, then every 30 s for as long as the source keeps failing
       _     <- source
                  .tapErrorCause(cause => ZIO.logWarningCause("live feed source failed, restarting", cause))
                  .retry(Schedule.exponential(1.second).upTo(30.seconds).andThen(Schedule.spaced(30.seconds)))
