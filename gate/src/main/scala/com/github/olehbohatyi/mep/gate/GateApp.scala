@@ -46,6 +46,6 @@ object GateApp extends ZIOAppDefault:
       // otherwise it waits out its timeout on the endless streams (and `docker stop` kills the gate meanwhile)
       _         <- Server
                      .serve(GateRoutes(ingestion, query, feed))
-                     .onInterrupt(feed.close)
+                     .ensuring(feed.close)
                      .provide(Server.defaultWith(_.binding(cfg.host, cfg.port)))
     yield ()
