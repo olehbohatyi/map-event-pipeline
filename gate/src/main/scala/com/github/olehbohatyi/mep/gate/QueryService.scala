@@ -8,6 +8,7 @@ import com.github.olehbohatyi.mep.stores.{ EventRepo, MapEventStat, StatsRepo }
 
 trait QueryService:
   def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[NearbyResponse]
+  def recent(limit: Int): Task[RecentResponse]
   def stats(region: Option[String]): Task[List[MapEventStat]]
 
 object QueryService:
@@ -30,6 +31,9 @@ object QueryService:
           )
           .map(enriched => NearbyResponse(region, enriched.size, enriched))
       }
+
+    def recent(limit: Int): Task[RecentResponse] =
+      events.findRecent(limit).map(found => RecentResponse(found.size, found))
 
     def stats(region: Option[String]): Task[List[MapEventStat]] =
       region.fold(stats.findAll)(stats.findByRegion)

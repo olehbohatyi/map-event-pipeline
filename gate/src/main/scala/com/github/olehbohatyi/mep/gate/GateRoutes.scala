@@ -4,29 +4,40 @@ import zio.*
 import zio.http.*
 import zio.http.codec.PathCodec
 import zio.http.endpoint.openapi.SwaggerUI
+import zio.json.*
+import zio.stream.ZStream
 
-import com.github.olehbohatyi.mep.domain.GeoPoint
+import com.github.olehbohatyi.mep.domain.{ GeoPoint, MapEvent }
 
 object GateRoutes:
 
   // POST /api/v1/events        — ingest a road event (optional Idempotency-Key header)
   // GET  /api/v1/events/nearby — events around lat/lon within radius (km)
+  // GET  /api/v1/events/recent — the latest events, newest first
+  // GET  /api/v1/events/live   — server-sent events as the pipe finishes them, optionally within ?bbox=
   // GET  /api/v1/stats         — aggregated counts, optionally ?region=
   // GET  /api/v1/health        — liveness probe
   // GET  /docs/openapi         — Swagger UI over the generated OpenAPI document (assets come from unpkg.com)
+  // GET  /map                  — live map page (Leaflet and OpenStreetMap tiles load from the internet)
 
-  private val MaxRadiusKm = 100.0
-  private val MaxLimit    = 500
+  private val MaxRadiusKm   = 100.0
+  private val MaxLimit      = 500
+  private val DefaultRecent = 200
+  private val Heartbeat     = 15.seconds
 
-  def apply(ingestion: IngestionService, query: QueryService): Routes[Any, Nothing] =
-    api(ingestion, query) ++ SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity)
+  def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
+    api(ingestion, query, feed) ++
+      SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
+      Routes(Method.GET / "map" -> Handler.fromResource("map/index.html").orDie)
 
-  // The API routes alone, without the docs
-  def api(ingestion: IngestionService, query: QueryService): Routes[Any, Nothing] =
+  // The API routes alone, without the docs and the map page
+  def api(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
     Routes(
       GateApi.health.implement(_ => ZIO.succeed("OK")),
       GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key)),
       GateApi.nearby.implement((lat, lon, radius, limit) => getNearby(query, lat, lon, radius, limit)),
+      GateApi.recent.implement(limit => getRecent(query, limit)),
+      GateApi.live.implement(bbox => liveEvents(feed, bbox)),
       GateApi.stats.implement(region => getStats(query, region)),
     ).transform(_.contramap[Request](readBodyAsJson))
 
@@ -73,6 +84,30 @@ object GateRoutes:
     invalid match
       case Some(msg) => ZIO.fail(ApiError.BadRequest(msg))
       case None      => query.findNearby(GeoPoint(lat, lon), r, l).catchAll(internalFail("nearby query"))
+
+  private def getRecent(query: QueryService, limit: Option[Int]): IO[ApiError, RecentResponse] =
+    val l = limit.getOrElse(DefaultRecent)
+    if l <= 0 || l > MaxLimit then ZIO.fail(ApiError.BadRequest(s"limit must be within [1, $MaxLimit]"))
+    else query.recent(l).catchAll(internalFail("recent query"))
+
+  // The payload is the same zio-json MapEvent as everywhere else (absent fields omitted), and the id lets clients
+  // drop the occasional duplicate. Heartbeats keep proxies from closing an idle connection.
+  private def liveEvents(
+      feed: LiveFeed,
+      bbox: Option[String],
+    ): IO[ApiError.BadRequest, ZStream[Any, Nothing, ServerSentEvent[String]]] =
+    ZIO
+      .fromEither(bbox.filter(_.nonEmpty).map(BoundingBox.parse).fold(Right(None))(_.map(Some(_))))
+      .mapError(ApiError.BadRequest(_))
+      .map { area =>
+        feed
+          .subscribe(area)
+          .map(sse)
+          .merge(ZStream.tick(Heartbeat).as(ServerSentEvent.heartbeat), ZStream.HaltStrategy.Left)
+      }
+
+  private def sse(event: MapEvent): ServerSentEvent[String] =
+    ServerSentEvent(event.toJson, eventType = Some("event"), id = Some(event.id.toString))
 
   private def getStats(query: QueryService, region: Option[String]): IO[ApiError.Internal, StatsResponse] =
     val filter = region.filter(_.nonEmpty)

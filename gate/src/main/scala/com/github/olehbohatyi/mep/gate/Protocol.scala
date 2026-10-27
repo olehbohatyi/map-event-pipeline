@@ -29,6 +29,8 @@ final case class IngestDuplicate(id: UUID, status: String) derives JsonCodec, Sc
 
 final case class NearbyResponse(region: String, count: Int, events: List[MapEvent]) derives JsonCodec, Schema
 
+final case class RecentResponse(count: Int, events: List[MapEvent]) derives JsonCodec, Schema
+
 final case class StatsResponse(region: Option[String], stats: List[MapEventStat]) derives JsonCodec, Schema
 
 // Every error body is `{"error": "..."}`; the subtype only picks the status code

@@ -32,6 +32,16 @@ object OpenApiSpec extends ZIOSpecDefault:
 
   private val update = sys.env.contains("UPDATE_OPENAPI")
 
+  private def refs(json: Json): List[String] =
+    json match
+      case Json.Obj(fields) =>
+        fields.toList.flatMap {
+          case ("$ref", Json.Str(ref)) => List(ref)
+          case (_, value)              => refs(value)
+        }
+      case Json.Arr(items)  => items.toList.flatMap(refs)
+      case _                => Nil
+
   def spec = suite("OpenAPI")(
     test("matches the committed document") {
       for
@@ -43,8 +53,28 @@ object OpenApiSpec extends ZIOSpecDefault:
       val paths = generated.asObject.flatMap(_.get("paths")).flatMap(_.asObject).map(_.keys.toSet)
       assertTrue(
         paths.contains(
-          Set("/api/v1/health", "/api/v1/events", "/api/v1/events/nearby", "/api/v1/stats")
+          Set(
+            "/api/v1/health",
+            "/api/v1/events",
+            "/api/v1/events/nearby",
+            "/api/v1/events/recent",
+            "/api/v1/events/live",
+            "/api/v1/stats",
+          )
         )
       )
+    },
+    // Regression: the generator referred to a ServerSentEvent schema for the live stream without writing one
+    test("every $ref points at a schema the document defines") {
+      val defined =
+        generated
+          .asObject
+          .flatMap(_.get("components"))
+          .flatMap(_.asObject)
+          .flatMap(_.get("schemas"))
+          .flatMap(_.asObject)
+      val names   = defined.map(_.keys.toSet).getOrElse(Set.empty)
+      val missing = refs(generated).map(_.stripPrefix("#/components/schemas/")).filterNot(names).distinct
+      assertTrue(refs(generated).nonEmpty, missing.isEmpty)
     },
   )

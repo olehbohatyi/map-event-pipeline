@@ -2,6 +2,8 @@ package com.github.olehbohatyi.mep.gate
 
 import zio.*
 import zio.http.*
+import zio.json.*
+import zio.stream.{ ZPipeline, ZStream }
 import zio.test.*
 
 import java.time.Instant
@@ -25,8 +27,17 @@ object GateRoutesSpec extends ZIOSpecDefault:
   final private class StubQuery(calls: Ref[List[(GeoPoint, Double, Int)]]) extends QueryService:
     def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[NearbyResponse] =
       calls.update(_ :+ (center, radiusKm, limit)).as(NearbyResponse("zone_50_30", 1, List(Samples.event())))
+    // Echoes the requested limit as the count, so tests can see what reached the service
+    def recent(limit: Int): Task[RecentResponse]                                         =
+      ZIO.succeed(RecentResponse(limit, Nil))
     def stats(region: Option[String]): Task[List[MapEventStat]]                          =
       ZIO.succeed(List(MapEventStat(region.getOrElse("all"), EventType.Hazard, 3, Instant.EPOCH)))
+
+  // For the tests that do not stream: no events, no subscribers
+  private object NoFeed extends LiveFeed:
+    def subscribe(area: Option[BoundingBox]): ZStream[Any, Nothing, MapEvent] = ZStream.never
+    def subscribers: UIO[Int]                                                 = ZIO.succeed(0)
+    def close: UIO[Unit]                                                      = ZIO.unit
 
   private val validBody =
     """{"eventType":"Hazard","severity":"High","location":{"lat":50.45,"lon":30.52},"description":"ice"}"""
@@ -36,7 +47,9 @@ object GateRoutesSpec extends ZIOSpecDefault:
       calls <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
       res   <-
         ZIO.scoped {
-          GateRoutes(StubIngestion, StubQuery(calls)).runZIO(req).flatMap(r => r.body.asString.orDie.map(r.status -> _))
+          GateRoutes(StubIngestion, StubQuery(calls), NoFeed)
+            .runZIO(req)
+            .flatMap(r => r.body.asString.orDie.map(r.status -> _))
         }
     yield res
 
@@ -149,6 +162,64 @@ object GateRoutesSpec extends ZIOSpecDefault:
     },
     test("serves the Swagger UI over the OpenAPI document") {
       call(get("/docs/openapi")).map((s, b) => assertTrue(s == Status.Ok, b.contains("SwaggerUI")))
+    },
+    test("recent uses a default limit and validates it") {
+      for
+        default <- call(get("/api/v1/events/recent"))
+        seven   <- call(get("/api/v1/events/recent?limit=7"))
+        zero    <- call(get("/api/v1/events/recent?limit=0"))
+        tooMany <- call(get("/api/v1/events/recent?limit=501"))
+      yield assertTrue(
+        default == (Status.Ok, """{"count":200,"events":[]}"""),
+        seven == (Status.Ok, """{"count":7,"events":[]}"""),
+        zero == (Status.BadRequest, """{"error":"limit must be within [1, 500]"}"""),
+        tooMany._1 == Status.BadRequest,
+      )
+    },
+    test("live rejects a malformed bbox before streaming") {
+      for
+        short   <- call(get("/api/v1/events/live?bbox=30,50,31"))
+        swapped <- call(get("/api/v1/events/live?bbox=31,50,30,51"))
+      yield assertTrue(
+        short == (Status.BadRequest, """{"error":"bbox must be four numbers: minLon,minLat,maxLon,maxLat"}"""),
+        swapped == (Status.BadRequest, """{"error":"bbox minimum must not exceed its maximum"}"""),
+      )
+    },
+    test("live streams events inside the bbox as server-sent events, and ends when the feed closes") {
+      val kyiv = Samples.event()
+      val lviv = Samples.event(location = GeoPoint(49.84, 24.03))
+      ZIO.scoped {
+        for
+          source <- Queue.unbounded[MapEvent]
+          feed   <- LiveFeed.fromSource(ZStream.fromQueue(source))
+          calls  <- Ref.make(List.empty[(GeoPoint, Double, Int)])
+          res    <- GateRoutes
+                      .api(StubIngestion, StubQuery(calls), feed)
+                      .runZIO(get("/api/v1/events/live?bbox=30,50,31,51"))
+          seen   <- Ref.make("")
+          reader <- res.body.asStream.via(ZPipeline.utf8Decode).runForeach(s => seen.update(_ + s)).fork
+          _      <- feed.subscribers.repeatUntil(_ == 1)
+          _      <- source.offerAll(List(lviv, kyiv))
+          // Close only once the client has the event; then the stream must end on its own
+          _      <- seen.get.repeatUntil(_.contains(kyiv.id.toString))
+          _      <- feed.close
+          ended  <- reader.join.timeout(5.seconds).withClock(Clock.ClockLive)
+          body   <- seen.get
+          after  <- feed.subscribers
+        yield assertTrue(
+          res.status == Status.Ok,
+          res.header(Header.ContentType).exists(_.mediaType == MediaType.text.`event-stream`),
+          body.contains(s"event: event\ndata: ${kyiv.toJson}\nid: ${kyiv.id}\n"),
+          !body.contains(lviv.id.toString),
+          ended.isDefined,
+          after == 0,
+        )
+      }
+    },
+    test("serves the live map page") {
+      call(get("/map")).map((s, b) =>
+        assertTrue(s == Status.Ok, b.contains("new EventSource(\"/api/v1/events/live\")"))
+      )
     },
     test("stats by region") {
       call(get("/api/v1/stats?region=zone_1_2"))

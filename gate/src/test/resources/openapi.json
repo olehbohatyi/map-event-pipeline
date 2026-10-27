@@ -218,6 +218,62 @@
         ],
         "type" : "object"
       },
+      "RecentResponse" : {
+        "properties" : {
+          "count" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "events" : {
+            "items" : {
+              "$ref" : "#/components/schemas/MapEvent"
+            },
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "count",
+          "events"
+        ],
+        "type" : "object"
+      },
+      "ServerSentEvent" : {
+        "description" : "Server-Sent Event (SSE) as defined by\nhttps://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events\n@param data\ndata, may span multiple lines\n@param eventType\noptional type, must not contain \\n or \\r\n@param id\noptional id, must not contain \\n or \\r\n@param retry\noptional reconnection delay",
+        "properties" : {
+          "data" : {
+            "type" : "string"
+          },
+          "eventType" : {
+            "default" : null,
+            "description" : "If not set, this field defaults to the value of the default annotation.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "id" : {
+            "default" : null,
+            "description" : "If not set, this field defaults to the value of the default annotation.",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
+          "retry" : {
+            "default" : null,
+            "description" : "If not set, this field defaults to the value of the default annotation.",
+            "format" : "duration",
+            "type" : [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required" : [
+          "data"
+        ],
+        "type" : "object"
+      },
       "Severity" : {
         "enum" : [
           "Low",
@@ -325,6 +381,46 @@
         }
       }
     },
+    "/api/v1/events/live" : {
+      "get" : {
+        "parameters" : [
+          {
+            "allowReserved" : false,
+            "description" : "Only events inside `minLon,minLat,maxLon,maxLat`; all events when absent.\n\n",
+            "in" : "query",
+            "name" : "bbox",
+            "schema" : {
+              "type" : "string"
+            },
+            "style" : "form"
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "text/event-stream" : {
+                "schema" : {
+                  "items" : {
+                    "$ref" : "#/components/schemas/ServerSentEvent"
+                  },
+                  "type" : "array"
+                }
+              }
+            },
+            "description" : "Server-sent events, one per event the pipe finishes: `event: event`, `id: <event id>`, `data: <MapEvent JSON>`. A `:heartbeat` comment every 15 seconds keeps the connection open. Delivery is best effort: a client that falls far behind loses its oldest events, and the same event may arrive twice.\n\n"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/events/nearby" : {
       "get" : {
         "parameters" : [
@@ -385,6 +481,53 @@
               }
             },
             "description" : "Events around the point, closest first, and the region the point is in.\n\n"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/recent" : {
+      "get" : {
+        "parameters" : [
+          {
+            "allowReserved" : false,
+            "description" : "Maximum number of events, within [1, 500]; default 200.\n\n",
+            "in" : "query",
+            "name" : "limit",
+            "schema" : {
+              "format" : "int32",
+              "type" : "integer"
+            },
+            "style" : "form"
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RecentResponse"
+                }
+              }
+            },
+            "description" : "The latest events by occurrence time, newest first.\n\n"
           },
           "400" : {
             "content" : {
