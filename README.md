@@ -156,6 +156,10 @@ shows type, region, description and time.
 - On shutdown the gate ends the live streams before the HTTP server's graceful shutdown, which would otherwise wait
   its full timeout on the endless streams. Browsers reconnect by themselves (`EventSource`).
 - Leaflet (pinned, with subresource integrity) and the map tiles load from the internet, like Swagger UI.
+- The page reloads `/recent` whenever the stream (re)connects, so events published while the gate was unreachable
+  show up after the reconnect.
+- The gate does not limit the number of live connections (each holds a subscription with a 1024-event buffer). Put a
+  reverse proxy with a connection limit in front of it before exposing it publicly.
 
 ### API
 
