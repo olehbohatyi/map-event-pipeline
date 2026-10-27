@@ -30,11 +30,13 @@ step() {
   fi
 }
 
-step "sbt check" sbt -batch check
+# --server: run in this JVM with this shell's environment. Without it sbt 2 hands the commands to a background server
+# that may have been started earlier with a different environment (e.g. without SPARK_JAVA_HOME)
+step "sbt check" sbt -batch --server check
 
 if ! $quick; then
   if docker info >/dev/null 2>&1; then
-    step "integration tests" sbt -batch itTest
+    step "integration tests" sbt -batch --server itTest
   else
     results+=("skip  integration tests (Docker is not running)")
   fi

@@ -24,11 +24,11 @@ jobs:
           cache: sbt
       - uses: sbt/setup-sbt@v1
       - name: Format, compile, unit tests
-        run: sbt -batch check
+        run: sbt -batch --server check
         env:
           SPARK_JAVA_HOME: ${{ env.JAVA_HOME_21_X64 }}
       - name: Integration tests (Testcontainers)
-        run: sbt -batch itTest
+        run: sbt -batch --server itTest
 
   mill:
     runs-on: ubuntu-latest
