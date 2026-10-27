@@ -4,7 +4,7 @@
 
 # ── build ────────────────────────────────────────────────────────────────────
 FROM eclipse-temurin:27-jdk AS build
-ARG SBT_VERSION=1.13.0
+ARG SBT_VERSION=2.0.11
 # Retry flaky artifact downloads instead of failing the build
 ENV COURSIER_RETRY=5
 ADD https://github.com/sbt/sbt/releases/download/v${SBT_VERSION}/sbt-${SBT_VERSION}.tgz /tmp/sbt.tgz
@@ -17,7 +17,7 @@ COPY project/build.properties project/plugins.sbt project/Dependencies.scala pro
 RUN --mount=type=cache,target=/root/.cache/coursier \
     --mount=type=cache,target=/root/.sbt \
     --mount=type=cache,target=/root/.ivy2 \
-    sbt -batch update
+    sbt -batch --server update
 
 COPY core/src/main core/src/main
 COPY gate/src/main gate/src/main
@@ -26,13 +26,18 @@ COPY stat/src/main stat/src/main
 RUN --mount=type=cache,target=/root/.cache/coursier \
     --mount=type=cache,target=/root/.sbt \
     --mount=type=cache,target=/root/.ivy2 \
-    sbt -batch gate/stage pipe/stage stat/assembly
+    sbt -batch --server "gate/stage; pipe/stage; stat/assembly"
+# sbt 2 writes to target/out/jvm/scala-<version>/<project>/; copy to fixed paths so a Scala bump does not break the COPYs
+RUN mkdir -p /out \
+ && cp -r target/out/jvm/scala-*/gate/universal/stage /out/gate \
+ && cp -r target/out/jvm/scala-*/pipe/universal/stage /out/pipe \
+ && cp target/out/jvm/scala-*/stat/stat.jar /out/stat.jar
 
 # ── gate: HTTP API ───────────────────────────────────────────────────────────
 FROM eclipse-temurin:27-jre AS gate
 RUN groupadd --system mep && useradd --system --gid mep mep
 WORKDIR /app
-COPY --from=build --chown=mep:mep /src/gate/target/universal/stage/ ./
+COPY --from=build --chown=mep:mep /out/gate/ ./
 USER mep
 EXPOSE 8080
 ENTRYPOINT ["bin/gate"]
@@ -41,12 +46,12 @@ ENTRYPOINT ["bin/gate"]
 FROM eclipse-temurin:27-jre AS pipe
 RUN groupadd --system mep && useradd --system --gid mep mep
 WORKDIR /app
-COPY --from=build --chown=mep:mep /src/pipe/target/universal/stage/ ./
+COPY --from=build --chown=mep:mep /out/pipe/ ./
 USER mep
 ENTRYPOINT ["bin/pipe"]
 
 # ── stat: Spark batch job (Spark 4.x runs on Java 21) ────────────────────────
 FROM apache/spark:4.2.0-scala2.13-java21-ubuntu AS stat
-COPY --from=build /src/stat/target/stat.jar /opt/mep/stat.jar
+COPY --from=build /out/stat.jar /opt/mep/stat.jar
 ENTRYPOINT ["/opt/spark/bin/spark-submit", "--master", "local[*]", \
             "--class", "com.github.olehbohatyi.mep.stat.StatApp", "/opt/mep/stat.jar"]

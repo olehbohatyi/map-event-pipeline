@@ -17,14 +17,15 @@ ThisBuild / scalacOptions ++= Seq(
 // Scala's LazyVals still touches sun.misc.Unsafe; silence the JDK 24+ deprecation banner
 lazy val jvmFlags = Seq("--sun-misc-unsafe-memory-access=allow")
 
-def forkSettings(flags: Seq[String]) = Seq(
-  Test / fork := true,
-  Test / javaOptions ++= flags,
-  run / fork  := true,
-  run / javaOptions ++= flags,
+// Settings are written out per project on purpose: sbt 2 evaluates a shared parameterised helper only once, so a
+// second project asking for different flags would silently get the first one's
+lazy val commonSettings = Seq(
+  Test / fork             := true,
+  Test / javaOptions ++= jvmFlags,
+  run / fork              := true,
+  run / javaOptions ++= jvmFlags,
+  Compile / doc / sources := Nil,
 )
-
-lazy val commonSettings = forkSettings(jvmFlags) :+ (Compile / doc / sources := Nil)
 
 // Spark 4.x does not run on JDK 24+ (it needs jdk.internal.ref.Cleaner), so stat's
 // tests and `run` fork the JDK 21 at SPARK_JAVA_HOME when it is set
@@ -70,7 +71,10 @@ lazy val pipe = (project in file("pipe"))
 // does not depend on core (which is on 3.10). It runs via spark-submit on Java 21.
 lazy val stat = (project in file("stat"))
   .settings(
-    forkSettings(sparkOpens),
+    Test / fork                      := true,
+    Test / javaOptions ++= sparkOpens,
+    run / fork                       := true,
+    run / javaOptions ++= sparkOpens,
     Compile / doc / sources          := Nil,
     Test / javaHome                  := sparkJavaHome,
     run / javaHome                   := sparkJavaHome,
@@ -88,7 +92,7 @@ lazy val stat = (project in file("stat"))
     // Spark provides scala-library 2.13; keep only scala3-library in the fat jar
     assembly / assemblyExcludedJars  := (assembly / fullClasspath)
       .value
-      .filter(_.data.getName.startsWith("scala-library")),
+      .filter(_.data.name.startsWith("scala-library")),
     assembly / assemblyMergeStrategy := {
       case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
       case "module-info.class"                                      => MergeStrategy.discard
@@ -116,5 +120,8 @@ lazy val root = (project in file("."))
   )
 
 addCommandAlias("fmt", "scalafmtSbt; scalafmtAll; it/scalafmtAll")
-addCommandAlias("check", "scalafmtSbtCheck; scalafmtCheckAll; it/scalafmtCheckAll; Test/compile; it/Test/compile; test")
-addCommandAlias("itTest", "it/test")
+addCommandAlias(
+  "check",
+  "scalafmtSbtCheck; scalafmtCheckAll; it/scalafmtCheckAll; Test/compile; it/Test/compile; testFull",
+)
+addCommandAlias("itTest", "it/testFull")
