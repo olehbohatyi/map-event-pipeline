@@ -4,7 +4,6 @@ import zio.*
 import zio.http.*
 import zio.http.codec.PathCodec
 import zio.http.endpoint.openapi.SwaggerUI
-import zio.json.*
 
 import com.github.olehbohatyi.mep.domain.GeoPoint
 
@@ -22,14 +21,19 @@ object GateRoutes:
   def apply(ingestion: IngestionService, query: QueryService): Routes[Any, Nothing] =
     api(ingestion, query) ++ SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity)
 
-  // The API routes alone, without the docs; request-decoding failures are reported as `{"error": ...}` like all others
+  // The API routes alone, without the docs
   def api(ingestion: IngestionService, query: QueryService): Routes[Any, Nothing] =
     Routes(
       GateApi.health.implement(_ => ZIO.succeed("OK")),
       GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key)),
       GateApi.nearby.implement((lat, lon, radius, limit) => getNearby(query, lat, lon, radius, limit)),
       GateApi.stats.implement(region => getStats(query, region)),
-    ).transform(_.mapZIO(normalizeDecodeError))
+    ).transform(_.contramap[Request](readBodyAsJson))
+
+  // Bodies are JSON whatever Content-Type the client sends (`curl -d` says form-urlencoded), as before the Endpoint API;
+  // zio-http picks the body decoder by that media type, so set it before decoding
+  private def readBodyAsJson(req: Request): Request =
+    req.copy(body = req.body.contentType(MediaType.application.json))
 
   private def internal(op: String)(err: Throwable): UIO[ApiError.Internal] =
     ZIO.logErrorCause(s"$op failed", Cause.fail(err)).as(ApiError.Internal("internal"))
@@ -76,19 +80,3 @@ object GateRoutes:
 
   private def internalFail(op: String)(err: Throwable): IO[ApiError.Internal, Nothing] =
     internal(op)(err).flatMap(ZIO.fail(_))
-
-  // zio-http reports undecodable input (bad JSON, unknown enum value, missing/malformed query parameter) as
-  // `{"name": ..., "message": ...}`; clients only ever see the `{"error": ...}` shape
-  private def normalizeDecodeError(res: Response): UIO[Response] =
-    if res.status != Status.BadRequest then ZIO.succeed(res)
-    else
-      ZIO.scoped(res.body.asString.orElseSucceed("")).map { body =>
-        body.fromJson[DecodeFailure] match
-          case Right(failure) => json(Status.BadRequest, ApiError.BadRequest(s"invalid request: ${failure.message}"))
-          case Left(_)        => res.copy(body = Body.fromString(body))
-      }
-
-  final private case class DecodeFailure(name: String, message: String) derives JsonDecoder
-
-  private def json[A: JsonEncoder](status: Status, body: A): Response =
-    Response.json(body.toJson).status(status)
