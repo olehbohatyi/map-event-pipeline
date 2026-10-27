@@ -1,6 +1,7 @@
 package com.github.olehbohatyi.mep.it
 
 import zio.*
+import zio.kafka.admin.{ AdminClient, AdminClientSettings }
 
 import com.github.olehbohatyi.mep.config.*
 import org.testcontainers.containers.GenericContainer
@@ -37,6 +38,19 @@ object Containers:
   // Auto-create is off, as in docker-compose: topics must come from TopicBootstrap
   val kafka: ZLayer[Any, Throwable, KafkaConfig] =
     ZLayer.scoped(
-      started(KafkaContainer("apache/kafka:4.3.0").withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "false"))
-        .map(c => TestKafka.config(servers = c.getBootstrapServers, group = "mep-it"))
+      for
+        c  <- started(KafkaContainer("apache/kafka:4.3.0").withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "false"))
+        cfg = TestKafka.config(servers = c.getBootstrapServers, group = "mep-it")
+        _  <- untilReachable(cfg)
+      yield cfg
     )
+
+  // On CI the mapped port can refuse connections for a moment after the container reports it started. zio-kafka
+  // checks the connection whenever it creates a client (producer, consumer or admin) and fails at once, with a
+  // misleading "Failed to create new KafkaAdminClient", so a suite's shared Producer layer failed before any test ran.
+  private def untilReachable(cfg: KafkaConfig): Task[Unit] =
+    ZIO
+      .scoped(AdminClient.make(AdminClientSettings(cfg.servers)).flatMap(_.listTopics()))
+      .retry(Schedule.spaced(250.millis) && Schedule.recurs(240))
+      .unit
+      .withClock(Clock.ClockLive)
