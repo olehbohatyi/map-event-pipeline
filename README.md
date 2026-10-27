@@ -146,8 +146,9 @@ With the `redpanda` profile, the console is at `localhost:8081`.
 | `GET` | `/api/v1/health` | Liveness. |
 | `GET` | `/docs/openapi` | Swagger UI over the generated OpenAPI 3.1 document. |
 
-Every error body is `{"error": "..."}`: `400` for invalid input (including unreadable JSON, an unknown enum value or a
-malformed query parameter) and `500` `{"error":"internal"}` for failures on our side.
+Every error body is `{"error": "..."}`, whatever the client's `Accept` header asks for: `400` for invalid input
+(including unreadable JSON, an unknown enum value or a malformed query parameter) and `500` `{"error":"internal"}` for
+failures on our side. Request bodies are read as JSON whatever `Content-Type` the client sends.
 
 #### OpenAPI
 
