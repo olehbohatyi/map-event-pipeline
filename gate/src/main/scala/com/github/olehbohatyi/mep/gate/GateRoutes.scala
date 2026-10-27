@@ -28,7 +28,12 @@ object GateRoutes:
   def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
     api(ingestion, query, feed) ++
       SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
-      Routes(Method.GET / "map" -> Handler.fromResource("map/index.html").orDie)
+      Routes(Method.GET / "map" -> mapPage)
+
+  // Served from the jar, whose entries carry a fixed timestamp (and the ETag only that and the size), so browsers would
+  // treat the page as fresh for years and keep an old version after a deploy. It is small: never cache it.
+  private val mapPage: Handler[Any, Nothing, Request, Response] =
+    Handler.fromResource("map/index.html").orDie.map(_.addHeader(Header.CacheControl.NoStore))
 
   // The API routes alone, without the docs and the map page
   def api(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
