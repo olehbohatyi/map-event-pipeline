@@ -108,5 +108,11 @@ object LiveFeedSpec extends ZIOSpecDefault:
           .map(BoundingBox.parse)
         assertTrue(errors.forall(_.isLeft))
       },
+      // Regression: NaN passes every range comparison, and split dropped a trailing empty field
+      test("rejects non-finite numbers and a trailing comma") {
+        val errors = List("NaN,0,1,1", "0,0,Infinity,1", "-Infinity,0,1,1", "30,50,31,51,")
+          .map(s => s -> BoundingBox.parse(s))
+        assertTrue(errors.forall(_._2.isLeft))
+      },
     ),
   ) @@ TestAspect.timeout(30.seconds)
