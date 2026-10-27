@@ -104,18 +104,21 @@
     el.className = `status ${cls}`;
   }
 
-  // Latest stored events first (oldest of them drawn first), then everything new as it happens
-  fetch("/api/v1/events/recent?limit=200")
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(body => body.events.reverse().forEach(e => show(e, false)))
-    .catch(err => console.warn("initial load failed", err))
-    .finally(() => {
-      const source = new EventSource("/api/v1/events/live");
-      source.onopen = () => status("live", "live");
-      // EventSource reconnects by itself, e.g. after a gate restart
-      source.onerror = () => status("reconnecting…", "down");
-      source.addEventListener("event", msg => show(JSON.parse(msg.data), true));
-    });
+  // The latest stored events, oldest of them drawn first; ones already on the map are left as they are
+  function loadRecent() {
+    fetch("/api/v1/events/recent?limit=200")
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(body => body.events.reverse().forEach(e => { if (!markers.has(e.id)) show(e, false); }))
+      .catch(err => console.warn("loading recent events failed", err));
+  }
+
+  // Load on every (re)connect: the stream has no history, so this also fills in what was published while the
+  // connection was down. Subscribing first means nothing falls between the two.
+  const source = new EventSource("/api/v1/events/live");
+  source.onopen = () => { status("live", "live"); loadRecent(); };
+  // EventSource reconnects by itself, e.g. after a gate restart
+  source.onerror = () => status("reconnecting…", "down");
+  source.addEventListener("event", msg => show(JSON.parse(msg.data), true));
 </script>
 </body>
 </html>
