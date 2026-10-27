@@ -116,6 +116,33 @@ object GateRoutesSpec extends ZIOSpecDefault:
         badJson._2.startsWith("{\"error\":\"invalid request:"),
       )
     },
+    // Regression: before the Endpoint API the gate read every body as JSON; `curl -d` sends form-urlencoded
+    test("reads the body as JSON whatever Content-Type the client sends") {
+      // The server attaches the header's media type to the body, and that is what decoding looks at
+      def post(contentType: MediaType) =
+        call(
+          Request
+            .post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody).contentType(contentType))
+            .addHeader(Header.ContentType(contentType))
+        )
+      for
+        form  <- post(MediaType.application.`x-www-form-urlencoded`)
+        plain <- post(MediaType.text.plain)
+        json  <- post(MediaType.application.json)
+      yield assertTrue(List(form, plain, json).forall(_._1 == Status.Accepted))
+    },
+    // Regression: zio-http rendered its decode errors as an HTML page when the client accepted HTML
+    test("reports unreadable requests as JSON even to clients that accept HTML") {
+      val html = Header.Accept(MediaType.text.html)
+      for
+        badJson <- call(Request.post(URL(Path.decode("/api/v1/events")), Body.fromString("{oops")).addHeader(html))
+        badNum  <- call(get("/api/v1/events/nearby?lat=abc&lon=30").addHeader(html))
+        missing <- call(get("/api/v1/events/nearby?lon=30").addHeader(html))
+      yield assertTrue(
+        List(badJson, badNum, missing).forall(_._1 == Status.BadRequest),
+        List(badJson, badNum, missing).forall(_._2.startsWith("{\"error\":\"invalid request:")),
+      )
+    },
     test("serves the Swagger UI over the OpenAPI document") {
       call(get("/docs/openapi")).map((s, b) => assertTrue(s == Status.Ok, b.contains("SwaggerUI")))
     },

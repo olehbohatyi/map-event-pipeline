@@ -36,6 +36,20 @@ object GateApi:
 
   private val IdempotencyKey = HeaderCodec.headerAs[String]("Idempotency-Key").optional
 
+  /** zio-http's own decode failures (unreadable JSON, unknown enum value, missing or malformed query parameter) as
+    * `{"error": "invalid request: ..."}`. Its default renders them by the client's Accept header, i.e. as an HTML page
+    * to browsers; this codec is JSON-only. It replaces the default rather than going in front of it (`outCodecError`),
+    * since with `Accept: text/html` the HTML-capable default would still be chosen.
+    */
+  private val invalidRequest: HttpCodec[HttpCodecType.ResponseType, HttpCodecError] =
+    (HttpCodec.content[ApiError.BadRequest] ++ StatusCodec.BadRequest)
+      .transform[HttpCodecError](bad => HttpCodecError.CustomError("InvalidRequest", bad.error))(err =>
+        ApiError.BadRequest(s"invalid request: ${err.getMessage}")
+      )
+
+  extension [P, I, E, O, A <: AuthType](endpoint: Endpoint[P, I, E, O, A])
+    private def invalidRequestAsJson: Endpoint[P, I, E, O, A] = endpoint.copy(codecError = invalidRequest)
+
   val health =
     Endpoint(Method.GET / "api" / "v1" / "health")
       .out[String](MediaType.text.plain, Doc.p("Liveness probe; always `OK`."))
@@ -46,6 +60,7 @@ object GateApi:
       .in[EventRequest](Doc.p("The road event to publish."))
       .out[IngestAccepted](Status.Accepted, Doc.p("The event was published to Kafka."))
       .out[IngestDuplicate](Status.Ok, Doc.p("The Idempotency-Key was seen before; nothing was published."))
+      .invalidRequestAsJson
       .outErrors[ApiError](
         HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
@@ -58,6 +73,7 @@ object GateApi:
       .query(QueryCodec.query[Double]("radius").optional ?? Doc.p("Radius in km, within (0, 100]; default 5."))
       .query(QueryCodec.query[Int]("limit").optional ?? Doc.p("Maximum number of events, within [1, 500]; default 50."))
       .out[NearbyResponse](Doc.p("Events around the point, closest first, and the region the point is in."))
+      .invalidRequestAsJson
       .outErrors[ApiError](
         HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
@@ -67,6 +83,7 @@ object GateApi:
     Endpoint(Method.GET / "api" / "v1" / "stats")
       .query(QueryCodec.query[String]("region").optional ?? Doc.p("Only this region; all regions when absent."))
       .out[StatsResponse](Doc.p("Event counts per region and type, as aggregated by the stat job."))
+      .invalidRequestAsJson
       .outError[ApiError.Internal](Status.InternalServerError)
 
   val endpoints = List(health, ingest, nearby, stats)
