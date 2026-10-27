@@ -78,6 +78,27 @@ object GateRoutesSpec extends ZIOSpecDefault:
           )
         )
     },
+    // Regression: occurredAt is client input; a far-future one stayed on top of /recent and on the map for good
+    test("rejects an occurredAt more than five minutes in the future, accepts one within the skew") {
+      val now                    = java.time.Instant.parse("2026-10-27T12:00:00Z")
+      def at(occurredAt: String) =
+        call(
+          Request.post(
+            URL(Path.decode("/api/v1/events")),
+            Body.fromString(validBody.dropRight(1) + s""","occurredAt":"$occurredAt"}"""),
+          )
+        )
+      for
+        _      <- TestClock.setTime(now)
+        future <- at("2026-10-27T12:05:01Z")
+        skewed <- at("2026-10-27T12:04:59Z")
+        past   <- at("2026-10-20T08:00:00Z")
+      yield assertTrue(
+        future == (Status.BadRequest, """{"error":"occurredAt must not be more than 5 minutes in the future"}"""),
+        skewed._1 == Status.Accepted,
+        past._1 == Status.Accepted,
+      )
+    },
     test("maps ingestion failures to 500") {
       val req = Request
         .post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody))
