@@ -165,7 +165,7 @@ shows type, region, description and time.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt`. Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `400` invalid. |
+| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `400` invalid. |
 | `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Exact great-circle distance, nearest first, plus the region of the query point. |
 | `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest events by occurrence time, newest first. |
 | `GET` | `/api/v1/events/live` | Server-sent events (`event: event`, `id`, `data: <MapEvent JSON>`), one per event the pipe finishes, plus a `:heartbeat` comment every 15 s. Optional `bbox=minLon,minLat,maxLon,maxLat`. |
