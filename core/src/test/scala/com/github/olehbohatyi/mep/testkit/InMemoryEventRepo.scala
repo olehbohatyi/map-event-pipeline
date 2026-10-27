@@ -23,6 +23,8 @@ final class InMemoryEventRepo(rows: Ref[Map[UUID, MapEvent]]) extends EventRepo:
           .take(limit)
           .map(_._1)
       )
+  def findRecent(limit: Int): Task[List[MapEvent]]                                     =
+    rows.get.map(_.values.toList.sortBy(_.occurredAt).reverse.take(limit))
   def all: UIO[List[MapEvent]]                                                         = rows.get.map(_.values.toList)
 
 object InMemoryEventRepo:
