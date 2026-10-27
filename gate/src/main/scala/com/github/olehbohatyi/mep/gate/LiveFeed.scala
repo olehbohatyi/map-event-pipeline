@@ -50,7 +50,8 @@ object LiveFeed:
     for
       hub   <- Hub.sliding[MapEvent](BufferSize)
       count <- Ref.make(0)
-      // Retries after 1, 2, 4, 8, 16 s, then every 30 s for as long as the source keeps failing
+      // Retries after 1, 2, 4, 8, 16 s, then every 30 s for as long as the source keeps failing; ZStream.retry starts
+      // the schedule over once an event gets through again, so a later failure begins at 1 s again
       _     <- source
                  .tapErrorCause(cause => ZIO.logWarningCause("live feed source failed, restarting", cause))
                  .retry(Schedule.exponential(1.second).upTo(30.seconds).andThen(Schedule.spaced(30.seconds)))
