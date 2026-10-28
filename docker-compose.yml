@@ -1,7 +1,7 @@
 # map-event-pipeline — infrastructure + applications
 #
 #   cp .env.example .env              # once; pick the broker in COMPOSE_PROFILES
-#   docker compose up -d --build      # postgres, redis, broker, gate, pipe
+#   docker compose up -d --build      # postgres, redis, broker, gate, pipe, lgtm (Grafana on :3000)
 #   docker compose run --rm stat      # Spark aggregation job (profile: stat)
 #   docker compose --profile stat up -d trends   # Spark streaming job: hourly counts (profile: stat)
 #
@@ -15,6 +15,10 @@ x-app-env: &app-env
   REDIS_HOST:              redis
   REDIS_PORT:              "6379"
   KAFKA_BOOTSTRAP_SERVERS: broker:9092
+  # Traces, metrics and logs to the lgtm service (standard OpenTelemetry SDK variables)
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_METRIC_EXPORT_INTERVAL: "10000"
 
 x-broker-deps: &broker-deps
   kafka:
@@ -27,6 +31,21 @@ x-broker-deps: &broker-deps
 services:
 
   # ── Always-on infrastructure ──────────────────────────────────────────────
+
+  # OpenTelemetry collector + Tempo (traces), Prometheus (metrics), Loki (logs) and Grafana in one container.
+  # Grafana: http://localhost:${GRAFANA_PORT:-3000} (anonymous admin), with the Map Event Pipeline dashboard.
+  # OTLP is published too, so apps started from sbt can export to it. Pinned by digest, like postgis.
+  lgtm:
+    image: grafana/otel-lgtm:0.38.1@sha256:0df9bc14142000b161344bd24caf6ddd319b7319055aedaf9b0692b125730af7
+    container_name: mep-lgtm
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+      - "${OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+    volumes:
+      - ./observability/grafana-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/mep.yaml:ro
+      - ./observability/map-event-pipeline.json:/otel-lgtm/mep-dashboards/map-event-pipeline.json:ro
 
   postgres:
     # PostgreSQL 18 with PostGIS 3.6: nearby queries and the region polygons need it.

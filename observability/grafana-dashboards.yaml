@@ -1,0 +1,9 @@
+# Mounted into grafana/otel-lgtm next to its own providers (RED and JVM dashboards)
+apiVersion: 1
+
+providers:
+  - name: "Map Event Pipeline"
+    type: file
+    options:
+      path: /otel-lgtm/mep-dashboards
+      foldersFromFilesStructure: false
