@@ -28,15 +28,17 @@ object TrendsSpec extends ZIOSpecDefault:
     def add(name: String, lines: String*): Task[Unit] =
       ZIO.attemptBlocking(Files.writeString(in.resolve(s"$name.json"), lines.mkString("\n"))).unit
 
-    // Processes what is there and stops, like a restart of the job would from the same checkpoint
-    def runOnce: RIO[SparkSession, Unit] =
+    // Processes what is there and stops, like a restart of the job would from the same checkpoint.
+    // Returns how many rows the run dropped as late.
+    def runOnce: RIO[SparkSession, Long] =
       ZIO.serviceWithZIO[SparkSession] { spark =>
         ZIO.attemptBlocking {
-          Trends
+          val query = Trends
             .start(spark.readStream.text(in.toString), checkpoint.toString, Trigger.AvailableNow()) { (batch, _) =>
               collect(batch).foreach(table.put)
             }
-            .awaitTermination()
+          query.awaitTermination()
+          query.recentProgress.map(Trends.droppedLate).sum
         }
       }
 
@@ -80,23 +82,26 @@ object TrendsSpec extends ZIOSpecDefault:
     },
     test("after a restart from the checkpoint it updates the counts and drops what is now late") {
       for
-        s    <- stream
-        _    <- s.add("1", event("a", "2026-10-27T10:05:00Z"), event("b", "2026-10-27T11:20:00Z"))
-        _    <- s.runOnce
-        first = s.counts
+        s       <- stream
+        _       <- s.add("1", event("a", "2026-10-27T10:05:00Z"), event("b", "2026-10-27T11:20:00Z"))
+        early   <- s.runOnce
+        first    = s.counts
         // The watermark is now 11:10: 10:05 is late, 11:15 and 11:40 are not
-        _    <- s.add(
-                  "2",
-                  event("late", "2026-10-27T10:05:00Z"),
-                  event("a", "2026-10-27T10:05:00Z"),
-                  event("c", "2026-10-27T11:15:00Z"),
-                  event("d", "2026-10-27T11:40:00Z"),
-                  event("d", "2026-10-27T11:40:00Z"),
-                )
-        _    <- s.runOnce
+        _       <- s.add(
+                     "2",
+                     event("late", "2026-10-27T10:05:00Z"),
+                     event("a", "2026-10-27T10:05:00Z"),
+                     event("c", "2026-10-27T11:15:00Z"),
+                     event("d", "2026-10-27T11:40:00Z"),
+                     event("d", "2026-10-27T11:40:00Z"),
+                   )
+        dropped <- s.runOnce
       yield assertTrue(
         first == Map((hour(10), "Kyiv City", "Hazard") -> 1L, (hour(11), "Kyiv City", "Hazard") -> 1L),
         s.counts == Map((hour(10), "Kyiv City", "Hazard") -> 1L, (hour(11), "Kyiv City", "Hazard") -> 3L),
+        // Regression: late events were dropped without a trace; the job now logs this count per batch
+        early == 0L,
+        dropped == 2L,
       )
     },
     test("windows by the gate's receive time, so a client's wrong clock cannot make later events late") {
