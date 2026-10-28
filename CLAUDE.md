@@ -54,6 +54,13 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   would shift by the JVM's zone). The Kafka connector is bundled in `stat.jar` minus what the Spark image ships —
   keep the exclusions in both builds in step. Test streaming via `readStream.text` + `foreachBatch` (the memory sink
   cannot restart from a checkpoint, `MemoryStream` needs encoders); share `TestSpark.layer`, never stop the session.
+- Telemetry (`core/telemetry/Telemetry`): no Java agent — trace context lives in a `FiberRef` (zio-telemetry
+  `contextZIO`). Apps are `ZIOApp`s whose `bootstrap` builds the SDK, the one context store and the logging bridge;
+  build `Telemetry.tracing`/`metrics` on top of that `Env`, never a second `contextZIO` (logs would lose trace ids).
+  HTTP in (`GateRoutes.observed`), Kafka out (`ProducerService`) and in (`TraceHeaders.continue`) are instrumented by
+  hand. zio-http's server merges the app with `++`, which keeps the *left* not-found handler, so unknown paths get a
+  real catch-all route to be traced. Tests use `testkit.TestTelemetry` (`tracing` no-op, `recording` in-memory spans).
+  Metric labels must stay low-cardinality.
 - Compose: `--profile stat` replaces `COMPOSE_PROFILES` from `.env` (no broker then); use
   `COMPOSE_PROFILES=kafka,stat docker compose …`.
 - Quill 4.8 pulls zio-json 0.7; it is excluded in both builds because zio-json 1.x is used. Import Quill's
