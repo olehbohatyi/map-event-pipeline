@@ -48,6 +48,14 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   Scala 3.7.4 (line marked `scala-steward:off`), compiles with `-release 21`, uses only the DataFrame API
   (no `spark.implicits` / encoders), and its tests fork the JDK in `SPARK_JAVA_HOME`
   (`cs java-home --jvm temurin:21`; `scripts/verify.sh` sets it). mill picks Java 21 itself via `jvmId`.
+- Streaming (`stat/Trends`, `TrendsApp`): windows by `createdAt` (server time), never `occurredAt` — the watermark
+  follows the max event time, so a client clock could make every later event late. The sink upserts absolute counts
+  (update mode) so replayed batches are harmless; window starts go into `timestamptz` (a plain `timestamp` column
+  would shift by the JVM's zone). The Kafka connector is bundled in `stat.jar` minus what the Spark image ships —
+  keep the exclusions in both builds in step. Test streaming via `readStream.text` + `foreachBatch` (the memory sink
+  cannot restart from a checkpoint, `MemoryStream` needs encoders); share `TestSpark.layer`, never stop the session.
+- Compose: `--profile stat` replaces `COMPOSE_PROFILES` from `.env` (no broker then); use
+  `COMPOSE_PROFILES=kafka,stat docker compose …`.
 - Quill 4.8 pulls zio-json 0.7; it is excluded in both builds because zio-json 1.x is used. Import Quill's
   `SnakeCase` explicitly — zio-json 1.x exports one too.
 - Gate idempotency keys (`mep:gate:idem:*`) and pipe processed ids (`mep:pipe:processed:*`) must stay in separate

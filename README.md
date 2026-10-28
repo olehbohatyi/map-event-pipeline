@@ -4,7 +4,8 @@ A demo event pipeline for road sensor events, built with **Scala 3**, **ZIO 2**,
 **PostgreSQL/PostGIS**, **Redis** and **Apache Spark**.
 
 Clients post events to an HTTP gateway, a stream processor deduplicates, enriches, escalates and routes them,
-and a Spark batch job aggregates per-region statistics that the gateway serves back.
+and Spark jobs aggregate per-region statistics that the gateway serves back: a batch job for the totals and a
+Structured Streaming job for hourly counts, kept current from Kafka.
 
 ## Architecture
 
@@ -31,7 +32,7 @@ and a Spark batch job aggregates per-region statistics that the gateway serves b
 | `core` | Domain model and JSON codecs, typed config, Postgres/PostGIS stores (Quill, Flyway, Chimney), Kafka producer, Redis caches, region resolution |
 | `gate` | HTTP API (zio-http): ingest events with optional idempotency, query nearby/recent events and region stats, stream finished events to the live map (SSE) |
 | `pipe` | Kafka consumer (zio-kafka): dedup → enrich with the oblast → escalate severity → persist → publish to typed topics |
-| `stat` | Spark batch job: counts enriched events per region and type into `map_event_stats` |
+| `stat` | Spark jobs: a batch job counts enriched events per region and type into `map_event_stats`; a Structured Streaming job (`TrendsApp`) keeps hourly counts per region and type in `map_event_trends` from `map.events.enriched` |
 | `it`   | Integration tests against real Postgres, Redis and Kafka (Testcontainers) |
 
 ### Delivery guarantees
@@ -132,7 +133,13 @@ curl 'localhost:8080/api/v1/events/nearby?lat=50.45&lon=30.52&radius=5&limit=20'
 
 docker compose run --rm stat              # aggregate into map_event_stats
 curl 'localhost:8080/api/v1/stats?region=Kyiv%20City'
+
+COMPOSE_PROFILES=kafka,stat docker compose up -d trends   # streaming job: hourly counts
+curl 'localhost:8080/api/v1/stats/hourly?region=Kyiv%20City&hours=24'
 ```
+
+`--profile stat` on the command line replaces `COMPOSE_PROFILES` from `.env` instead of adding to it, so the broker
+would not start; list both profiles as above.
 
 With the `redpanda` profile, the console is at `localhost:8081`.
 
@@ -141,6 +148,25 @@ Open the live map at `localhost:8080/map`, then feed it:
 ```bash
 scripts/demo.sh             # 50 random events around Ukrainian cities, one every 0.5 s
 ```
+
+### Hourly trends (Spark Structured Streaming)
+
+`TrendsApp` (in `stat`, run by the `trends` compose service) reads `map.events.enriched` and keeps
+`map_event_trends` (one row per hour, region and event type) up to date every 30 s; `GET /api/v1/stats/hourly`
+serves it.
+
+- Windows are by `createdAt`, the gate's receive time. Spark's watermark follows the newest event time seen, so
+  windowing by the client's `occurredAt` would let one wrong clock mark every later event as late.
+- Events more than 10 minutes behind the newest one seen are dropped as late; the batch job still counts them.
+- The pipe may publish an event twice after a retry: duplicates are dropped by id within the watermark.
+- Each micro-batch carries the full count of every window it changed (update mode) and is upserted, so a batch that
+  Spark replays after a crash writes the same values again. Checked: forcing a replay restored a count edited by hand.
+- The checkpoint (Kafka offsets and de-duplication state) lives in the `trends_checkpoint` volume. A fresh checkpoint
+  starts from the oldest retained record, so the table is backfilled from the topic's retention (7 days) first.
+- The Kafka source is not part of the `apache/spark` image, so `stat.jar` bundles it, without the jars the image
+  already ships (Hadoop client, compression codecs, slf4j, Scala, `spark-tags`).
+- The tests run the same query over text files with an in-memory sink (no Kafka, Postgres or Dataset encoders);
+  the compose stack was checked against `map_events` hour by hour, before and after a restart.
 
 ### Live map
 
@@ -170,6 +196,7 @@ shows type, region, description and time.
 | `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest events by occurrence time, newest first. |
 | `GET` | `/api/v1/events/live` | Server-sent events (`event: event`, `id`, `data: <MapEvent JSON>`), one per event the pipe finishes, plus a `:heartbeat` comment every 15 s. Optional `bbox=minLon,minLat,maxLon,maxLat`. |
 | `GET` | `/api/v1/stats` | Optional `region`. |
+| `GET` | `/api/v1/stats/hourly` | Optional `region`, `hours` (default 24, max 168, the current hour included). Hourly counts from the streaming job, oldest first; hours without events are absent. |
 | `GET` | `/api/v1/health` | Liveness. |
 | `GET` | `/docs/openapi` | Swagger UI over the generated OpenAPI 3.1 document. |
 | `GET` | `/map` | The live map. |
@@ -260,7 +287,7 @@ How the work is organised:
 ├── build.sbt, project/       sbt build (versions in project/Dependencies.scala)
 ├── build.mill, mill          mill build + launcher
 ├── Dockerfile                build stage + gate / pipe / stat targets
-├── docker-compose.yml        infrastructure, apps, `stat` profile
+├── docker-compose.yml        infrastructure, apps, `stat` profile (batch `stat`, streaming `trends`)
 ├── scripts/verify.sh         the checks CI runs
 ├── scripts/regions/          buildSeed.sc: regenerates the region polygons from Natural Earth
 ├── CLAUDE.md, .claude/       Claude Code brief, /verify skill, scalafmt hook
@@ -275,6 +302,6 @@ How the work is organised:
 │       └── geo/              RegionResolver
 ├── gate/                     GateRoutes, IngestionService, QueryService, GateApp
 ├── pipe/                     StreamProcessor, EventHandler, Dedup/Enrichment/Escalation, PipeApp
-├── stat/                     EventAggregator, StatApp
+├── stat/                     EventAggregator, StatApp (batch); Trends, TrendsApp (streaming)
 └── it/                       Testcontainers specs
 ```
