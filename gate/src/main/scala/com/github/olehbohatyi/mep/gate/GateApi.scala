@@ -15,6 +15,8 @@ import java.nio.charset.StandardCharsets.UTF_8
 
 import com.github.olehbohatyi.mep.domain.MapEvent
 
+/** The HTTP contract of the gate: the endpoints are the single source for both the routes and the OpenAPI document.
+  */
 object GateApi:
 
   /** JSON content codec that encodes with zio-json (the wire format stays exactly what clients already get, e.g. absent

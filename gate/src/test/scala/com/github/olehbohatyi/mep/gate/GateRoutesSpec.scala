@@ -273,7 +273,8 @@ object GateRoutesSpec extends ZIOSpecDefault:
         found._1 == Status.Ok,
         found._2.contains(s"\"id\":\"$fixedId\""),
         missing == (Status.NotFound, """{"error":"no stored event 00000000-0000-0000-0000-000000000002"}"""),
-        bad._1 == Status.NotFound || bad._1 == Status.BadRequest,
+        // Not a UUID, so no route matches: the catch-all answers 404
+        bad._1 == Status.NotFound,
       )
     },
     test("hourly uses a default of 24 hours and validates the range") {
