@@ -26,6 +26,7 @@ object V {
   val chimney    = "2.1.0"
   val spark      = "4.2.0"
   val testcont   = "2.0.5"
+  val gatling    = "3.16.0"
 }
 
 // sbt/Maven directory layout (src/main/scala, src/test/scala), shared with the sbt build
@@ -150,4 +151,13 @@ object it extends MepModule {
       mvn"org.testcontainers:testcontainers-kafka:${V.testcont}"
     )
   }
+}
+
+// Gatling load test against a running stack: `./mill load.run` (LOAD_PROFILE, GATE_URL)
+object load extends MepModule {
+  // Gatling is built on the Scala 2.13 library; its Java DSL is used from Scala 3
+  def mvnDeps   = Seq(mvn"io.gatling.highcharts:gatling-charts-highcharts:${V.gatling}")
+  def mainClass = Some("com.github.olehbohatyi.mep.load.LoadTest")
+  // Gatling needs java.lang opened on JDK 17+ (its own build plugins add the same flag)
+  def forkArgs  = super.forkArgs() ++ Seq("--add-opens=java.base/java.lang=ALL-UNNAMED")
 }

@@ -111,6 +111,20 @@ lazy val it = (project in file("it"))
     Test / parallelExecution := false,
   )
 
+// Gatling load test against a running stack: `sbt -batch --server load/run` (LOAD_PROFILE, GATE_URL). Not part of the
+// aggregate; `check` only compiles it.
+lazy val load = (project in file("load"))
+  .settings(
+    name                    := "load",
+    publish / skip          := true,
+    libraryDependencies ++= loadDeps,
+    Compile / mainClass     := Some("com.github.olehbohatyi.mep.load.LoadTest"),
+    Compile / doc / sources := Nil,
+    run / fork              := true,
+    // Gatling needs java.lang opened on JDK 17+ (its own build plugins add the same flag)
+    run / javaOptions ++= jvmFlags :+ "--add-opens=java.base/java.lang=ALL-UNNAMED",
+  )
+
 // `it` is left out of the aggregate so `sbt test` runs without Docker; see the aliases
 lazy val root = (project in file("."))
   .aggregate(core, gate, pipe, stat)
@@ -119,9 +133,9 @@ lazy val root = (project in file("."))
     publish / skip := true,
   )
 
-addCommandAlias("fmt", "scalafmtSbt; scalafmtAll; it/scalafmtAll")
+addCommandAlias("fmt", "scalafmtSbt; scalafmtAll; it/scalafmtAll; load/scalafmtAll")
 addCommandAlias(
   "check",
-  "scalafmtSbtCheck; scalafmtCheckAll; it/scalafmtCheckAll; Test/compile; it/Test/compile; testFull",
+  "scalafmtSbtCheck; scalafmtCheckAll; it/scalafmtCheckAll; load/scalafmtCheckAll; Test/compile; it/Test/compile; load/compile; testFull",
 )
 addCommandAlias("itTest", "it/testFull")
