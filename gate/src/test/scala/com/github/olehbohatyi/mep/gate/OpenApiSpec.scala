@@ -60,6 +60,7 @@ object OpenApiSpec extends ZIOSpecDefault:
             "/api/v1/events/recent",
             "/api/v1/events/live",
             "/api/v1/stats",
+            "/api/v1/stats/hourly",
           )
         )
       )

@@ -7,7 +7,7 @@ import java.time.Instant
 import java.util.UUID
 
 import com.github.olehbohatyi.mep.domain.*
-import com.github.olehbohatyi.mep.stores.MapEventStat
+import com.github.olehbohatyi.mep.stores.{ MapEventStat, MapEventTrend }
 
 // ── HTTP request/response DTOs ───────────────────────────────────────────────
 // zio-json writes the bytes (so `None` fields stay omitted); zio-schema only describes them for the OpenAPI spec.
@@ -32,6 +32,11 @@ final case class NearbyResponse(region: String, count: Int, events: List[MapEven
 final case class RecentResponse(count: Int, events: List[MapEvent]) derives JsonCodec, Schema
 
 final case class StatsResponse(region: Option[String], stats: List[MapEventStat]) derives JsonCodec, Schema
+
+// Hourly counts from the streaming job, oldest hour first; hours without events are absent
+final case class HourlyResponse(region: Option[String], hours: Int, counts: List[MapEventTrend])
+    derives JsonCodec,
+      Schema
 
 // Every error body is `{"error": "..."}`; the subtype only picks the status code
 sealed trait ApiError:

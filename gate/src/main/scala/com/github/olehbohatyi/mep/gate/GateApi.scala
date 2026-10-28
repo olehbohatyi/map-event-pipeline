@@ -116,7 +116,25 @@ object GateApi:
       .invalidRequestAsJson
       .outError[ApiError.Internal](Status.InternalServerError)
 
-  val endpoints = List(health, ingest, nearby, recent, live, stats)
+  val hourly =
+    Endpoint(Method.GET / "api" / "v1" / "stats" / "hourly")
+      .query(QueryCodec.query[String]("region").optional ?? Doc.p("Only this region; all regions when absent."))
+      .query(
+        QueryCodec.query[Int]("hours").optional ??
+          Doc.p("How many hours back, the current one included, within [1, 168]; default 24.")
+      )
+      .out[HourlyResponse](
+        Doc.p(
+          "Event counts per hour (UTC, by the gate's receive time), region and type, kept current by the streaming job."
+        )
+      )
+      .invalidRequestAsJson
+      .outErrors[ApiError](
+        HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
+        HttpCodec.error[ApiError.Internal](Status.InternalServerError),
+      )
+
+  val endpoints = List(health, ingest, nearby, recent, live, stats, hourly)
 
   val openApi: OpenAPI =
     val generated = OpenAPIGen.fromEndpoints("Map Event Pipeline API", "1.0.0", endpoints.head, endpoints.tail*)
