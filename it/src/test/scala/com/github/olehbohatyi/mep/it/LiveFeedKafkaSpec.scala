@@ -8,7 +8,7 @@ import java.util.UUID
 import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.config.KafkaConfig
 import com.github.olehbohatyi.mep.gate.LiveFeed
-import com.github.olehbohatyi.mep.testkit.Samples
+import com.github.olehbohatyi.mep.testkit.{ Samples, TestTelemetry }
 
 // The gate's live feed against a real broker: what the pipe publishes to the enriched topic reaches the map
 object LiveFeedKafkaSpec extends ZIOSpecDefault:
@@ -49,4 +49,4 @@ object LiveFeedKafkaSpec extends ZIOSpecDefault:
       }
     }
   ) @@ TestAspect.beforeAll(TopicBootstrap.run.orDie) @@ TestAspect.withLiveClock @@ TestAspect.timeout(5.minutes))
-    .provideShared(Containers.kafka, ProducerService.live)
+    .provideShared(Containers.kafka, TestTelemetry.tracing, ProducerService.live)

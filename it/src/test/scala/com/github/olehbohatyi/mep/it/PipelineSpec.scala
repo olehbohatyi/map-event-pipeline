@@ -5,9 +5,12 @@ import zio.kafka.consumer.{ Consumer, ConsumerSettings, Subscription }
 import zio.kafka.producer.{ Producer, ProducerSettings }
 import zio.kafka.serde.Serde
 import zio.redis.Redis
+import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
 
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
 import org.apache.kafka.clients.producer.ProducerRecord
+import scala.jdk.CollectionConverters.*
 import com.github.olehbohatyi.mep.broker.{ EventCodec, ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.*
 import com.github.olehbohatyi.mep.config.*
@@ -16,6 +19,7 @@ import com.github.olehbohatyi.mep.gate.{ EventRequest, IngestionResult, Ingestio
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.pipe.*
 import com.github.olehbohatyi.mep.stores.*
+import com.github.olehbohatyi.mep.testkit.TestTelemetry
 
 // End to end: gate ingestion → Kafka raw → pipe → Postgres + typed topic
 object PipelineSpec extends ZIOSpecDefault:
@@ -78,13 +82,24 @@ object PipelineSpec extends ZIOSpecDefault:
                        }
                      )
         gate      <- ZIO.service[IngestionService]
-        first     <- gate.ingest(request, Some("e2e-1"))
+        tracing   <- ZIO.service[Tracing]
+        // Stands in for the gate's HTTP server span
+        first     <- tracing.span("client request")(gate.ingest(request, Some("e2e-1")))
         retry     <- gate.ingest(request, Some("e2e-1"))
         id         = IngestionService.eventId("e2e-1")
         repo      <- ZIO.service[EventRepo]
         stored    <- eventually(repo.findById(id))
         hazards   <- readTopic(cfg, cfg.topics.hazards, 1).timeoutFail(RuntimeException("no hazard event"))(60.seconds)
         dlq       <- readRaw(cfg, cfg.topics.dlq, 2).timeoutFail(RuntimeException("no dead letter"))(60.seconds)
+        // The pipe continues the trace from the raw record's headers
+        spans     <- ZIO.service[InMemorySpanExporter]
+        trace     <- eventually(ZIO.attempt {
+                       val all  = spans.getFinishedSpanItems.asScala.toList
+                       val same = all
+                         .find(_.getName == "client request")
+                         .map(root => all.filter(_.getTraceId == root.getTraceId).map(_.getName).toSet)
+                       same.filter(names => names("raw process") && names("enriched publish"))
+                     })
         _         <- processor.interrupt
       yield assertTrue(
         first == IngestionResult.Accepted(id),
@@ -96,6 +111,7 @@ object PipelineSpec extends ZIOSpecDefault:
         dlq.map(r => r.value -> r.key).toMap == Map("{oops" -> Some("bad"), "{oops-keyless" -> None),
         dlq.forall(_.headers(RecordHandler.Headers.SourceTopic) == cfg.topics.raw),
         dlq.forall(_.headers(RecordHandler.Headers.Error).nonEmpty),
+        Set("raw publish", "raw process", "enrich", "store", "enriched publish", "hazards publish").subsetOf(trace),
       )
     }
   ) @@ TestAspect.beforeAll(
@@ -103,6 +119,7 @@ object PipelineSpec extends ZIOSpecDefault:
   ) @@ TestAspect.withLiveClock @@ TestAspect
     .timeout(5.minutes))
     .provideShared(
+      TestTelemetry.recording,
       Containers.kafka,
       Containers.postgres,
       Containers.redis >>> RedisService.live,

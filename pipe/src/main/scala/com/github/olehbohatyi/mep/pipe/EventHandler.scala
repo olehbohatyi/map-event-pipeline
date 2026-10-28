@@ -1,6 +1,7 @@
 package com.github.olehbohatyi.mep.pipe
 
 import zio.*
+import zio.telemetry.opentelemetry.tracing.Tracing
 
 import com.github.olehbohatyi.mep.broker.ProducerService
 import com.github.olehbohatyi.mep.config.KafkaConfig
@@ -19,10 +20,10 @@ trait EventHandler:
 object EventHandler:
 
   val live: URLayer[
-    KafkaConfig & EventRepo & ProducerService & DeduplicationService & EnrichmentService & EscalationService,
+    KafkaConfig & EventRepo & ProducerService & DeduplicationService & EnrichmentService & EscalationService & Tracing,
     EventHandler,
   ] =
-    ZLayer.fromFunction(EventHandlerLive(_, _, _, _, _, _))
+    ZLayer.fromFunction(EventHandlerLive(_, _, _, _, _, _, _))
 
   final private class EventHandlerLive(
       kafka: KafkaConfig,
@@ -31,21 +32,22 @@ object EventHandler:
       dedup: DeduplicationService,
       enrichment: EnrichmentService,
       escalation: EscalationService,
+      tracing: Tracing,
     ) extends EventHandler:
 
     def handle(event: MapEvent): Task[Outcome] =
-      dedup.isProcessed(event).flatMap {
+      tracing.span("dedup check")(dedup.isProcessed(event)).flatMap {
         case true  => ZIO.succeed(Outcome.Duplicate)
         case false =>
           for
-            enriched  <- enrichment.enrich(event)
-            escalated <- escalation.escalate(enriched)
-            _         <- repo.insert(escalated)
+            enriched  <- tracing.span("enrich")(enrichment.enrich(event))
+            escalated <- tracing.span("escalate")(escalation.escalate(enriched))
+            _         <- tracing.span("store")(repo.insert(escalated))
             topic      = escalation.topicFor(escalated)
             // Publish even if the row already existed: a previous attempt may have
             // crashed between insert and publish. Consumers dedup by event id.
             _         <- producer.publish(kafka.topics.enriched, escalated)
             _         <- producer.publish(topic, escalated)
-            _         <- dedup.markProcessed(event)
+            _         <- tracing.span("dedup mark")(dedup.markProcessed(event))
           yield Outcome.Processed(topic)
       }

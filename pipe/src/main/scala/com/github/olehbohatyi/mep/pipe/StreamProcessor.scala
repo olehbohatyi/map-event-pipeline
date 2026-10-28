@@ -4,6 +4,8 @@ import zio.*
 import zio.kafka.consumer.{ Consumer, ConsumerSettings, Subscription }
 import zio.kafka.serde.Serde
 
+import java.nio.charset.StandardCharsets.UTF_8
+
 import com.github.olehbohatyi.mep.config.KafkaConfig
 
 trait StreamProcessor:
@@ -33,8 +35,17 @@ object StreamProcessor:
       consumer
         .plainStream(Subscription.topics(kafka.topics.raw), Serde.string, Serde.string)
         .mapZIO { record =>
-          val raw =
-            RawRecord(record.record.topic, record.partition, record.offset.offset, Option(record.key), record.value)
+          // The last value of each header wins, as Kafka's own lastHeader does
+          val headers = record.record.headers.toArray.map(h => h.key -> String(h.value, UTF_8)).toMap
+          val raw     =
+            RawRecord(
+              record.record.topic,
+              record.partition,
+              record.offset.offset,
+              Option(record.key),
+              record.value,
+              headers,
+            )
           handler.handle(raw).as(record.offset)
         }
         .aggregateAsync(Consumer.offsetBatches)

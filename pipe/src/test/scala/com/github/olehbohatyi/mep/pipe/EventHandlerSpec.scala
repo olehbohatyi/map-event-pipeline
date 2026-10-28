@@ -13,7 +13,7 @@ object EventHandlerSpec extends ZIOSpecDefault:
   val kafka = TestKafka.config()
 
   // Escalation without Redis: route by type, never escalate
-  private val routingOnly: URLayer[KafkaConfig, EscalationService] = ZLayer.fromFunction((cfg: KafkaConfig) =>
+  val routingOnly: URLayer[KafkaConfig, EscalationService] = ZLayer.fromFunction((cfg: KafkaConfig) =>
     new EscalationService:
       def topicFor(event: MapEvent): String         =
         event.eventType match
@@ -90,6 +90,7 @@ object EventHandlerSpec extends ZIOSpecDefault:
       yield assertTrue(outcome == Outcome.Processed("hazards"), sent.size == 2, rows.size == 1)
     },
   ).provide(
+    TestTelemetry.tracing,
     ZLayer.succeed(kafka),
     InMemoryEventRepo.layer,
     RecordingProducer.layer,

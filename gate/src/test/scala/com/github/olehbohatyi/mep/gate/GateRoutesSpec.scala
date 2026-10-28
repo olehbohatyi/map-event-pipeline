@@ -4,6 +4,7 @@ import zio.*
 import zio.http.*
 import zio.json.*
 import zio.stream.{ ZPipeline, ZStream }
+import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
 
 import java.time.Instant
@@ -11,20 +12,20 @@ import java.util.UUID
 
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.stores.{ MapEventStat, MapEventTrend }
-import com.github.olehbohatyi.mep.testkit.Samples
+import com.github.olehbohatyi.mep.testkit.{ Samples, TestTelemetry }
 
 object GateRoutesSpec extends ZIOSpecDefault:
 
   private val fixedId = UUID.fromString("00000000-0000-0000-0000-000000000001")
 
-  private object StubIngestion extends IngestionService:
+  object StubIngestion extends IngestionService:
     def ingest(request: EventRequest, idempotencyKey: Option[String]): Task[IngestionResult] =
       idempotencyKey match
         case Some("dup")  => ZIO.succeed(IngestionResult.Duplicate(fixedId))
         case Some("boom") => ZIO.fail(RuntimeException("kafka down"))
         case _            => ZIO.succeed(IngestionResult.Accepted(fixedId))
 
-  final private class StubQuery(calls: Ref[List[(GeoPoint, Double, Int)]]) extends QueryService:
+  final class StubQuery(calls: Ref[List[(GeoPoint, Double, Int)]]) extends QueryService:
     def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[NearbyResponse] =
       calls.update(_ :+ (center, radiusKm, limit)).as(NearbyResponse("zone_50_30", 1, List(Samples.event())))
     // Echoes the requested limit as the count, so tests can see what reached the service
@@ -39,7 +40,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
       )
 
   // For the tests that do not stream: no events, no subscribers
-  private object NoFeed extends LiveFeed:
+  object NoFeed extends LiveFeed:
     def subscribe(area: Option[BoundingBox]): ZStream[Any, Nothing, MapEvent] = ZStream.never
     def subscribers: UIO[Int]                                                 = ZIO.succeed(0)
     def close: UIO[Unit]                                                      = ZIO.unit
@@ -47,12 +48,13 @@ object GateRoutesSpec extends ZIOSpecDefault:
   private val validBody =
     """{"eventType":"Hazard","severity":"High","location":{"lat":50.45,"lon":30.52},"description":"ice"}"""
 
-  private def call(req: Request): ZIO[Ref[List[(GeoPoint, Double, Int)]], Nothing, (Status, String)] =
+  private def call(req: Request): ZIO[Ref[List[(GeoPoint, Double, Int)]] & Tracing, Nothing, (Status, String)] =
     for
-      calls <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
-      res   <-
+      calls   <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
+      tracing <- ZIO.service[Tracing]
+      res     <-
         ZIO.scoped {
-          GateRoutes(StubIngestion, StubQuery(calls), NoFeed)
+          GateRoutes(StubIngestion, StubQuery(calls), NoFeed, tracing)
             .runZIO(req)
             .flatMap(r => r.body.asString.orDie.map(r.status -> _))
         }
@@ -245,9 +247,10 @@ object GateRoutesSpec extends ZIOSpecDefault:
     test("serves the live map page as HTML") {
       ZIO.scoped {
         for
-          calls <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
-          res   <- GateRoutes(StubIngestion, StubQuery(calls), NoFeed).runZIO(get("/map"))
-          body  <- res.body.asString.orDie
+          calls   <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
+          tracing <- ZIO.service[Tracing]
+          res     <- GateRoutes(StubIngestion, StubQuery(calls), NoFeed, tracing).runZIO(get("/map"))
+          body    <- res.body.asString.orDie
         yield assertTrue(
           res.status == Status.Ok,
           res.header(Header.ContentType).exists(_.mediaType == MediaType.text.html),
@@ -277,4 +280,4 @@ object GateRoutesSpec extends ZIOSpecDefault:
       call(get("/api/v1/stats?region=zone_1_2"))
         .map((s, b) => assertTrue(s == Status.Ok, b.contains("\"region\":\"zone_1_2\""), b.contains("\"count\":3")))
     },
-  ).provide(ZLayer(Ref.make(List.empty[(GeoPoint, Double, Int)])))
+  ).provide(ZLayer(Ref.make(List.empty[(GeoPoint, Double, Int)])), TestTelemetry.tracing)
