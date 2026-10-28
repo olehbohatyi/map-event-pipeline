@@ -1,0 +1,53 @@
+# Images are built by the repository's Dockerfile (targets gate, pipe); on kind they are loaded with
+# `kind load docker-image`, hence pullPolicy Never by default
+gate:
+  image: map-event-gate:latest
+  pullPolicy: Never
+  replicas: 1
+  port: 8080
+  resources:
+    requests: {cpu: 100m, memory: 384Mi}
+    limits: {memory: 768Mi}
+
+pipe:
+  image: map-event-pipe:latest
+  pullPolicy: Never
+  # Each replica takes a share of the raw topic's partitions (3 by default)
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+postgres:
+  db: mapevents
+  user: mep
+  # The password comes from a Secret: set `password`, or name an existing Secret with a POSTGRES_PASSWORD key
+  password: ""
+  existingSecret: ""
+  # Used when infra.enabled is false
+  url: ""
+
+redis:
+  host: ""   # used when infra.enabled is false
+  port: 6379
+
+kafka:
+  bootstrapServers: ""   # used when infra.enabled is false
+
+# Single-replica Postgres (PostGIS), Redis and Kafka for development and CI. Turn off and fill the addresses above
+# to use real services.
+infra:
+  enabled: true
+  storage: 1Gi
+  postgresImage: postgis/postgis:18-3.6-alpine@sha256:c53a483fc274072dfa02cd491efa79f3c8ae0a10774a0ece6c9c53b6a632cdef
+  redisImage: redis:8.6.3-alpine3.23
+  kafkaImage: apache/kafka:4.3.0
+
+# grafana/otel-lgtm for traces, metrics and logs. Off by default: it needs about 1.2 GiB more. When off, the apps run
+# with OpenTelemetry disabled.
+lgtm:
+  enabled: false
+  image: grafana/otel-lgtm:0.38.1@sha256:0df9bc14142000b161344bd24caf6ddd319b7319055aedaf9b0692b125730af7
+
+# Waits in init containers until a dependency accepts connections, instead of the apps crash-restarting
+waitImage: busybox:1.37
