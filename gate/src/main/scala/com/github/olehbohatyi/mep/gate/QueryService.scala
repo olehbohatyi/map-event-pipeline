@@ -4,13 +4,14 @@ import zio.*
 
 import java.time.temporal.ChronoUnit
 
-import com.github.olehbohatyi.mep.domain.GeoPoint
+import com.github.olehbohatyi.mep.domain.{ GeoPoint, MapEvent }
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.stores.{ EventRepo, MapEventStat, MapEventTrend, StatsRepo, TrendsRepo }
 
 trait QueryService:
   def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[NearbyResponse]
   def recent(limit: Int): Task[RecentResponse]
+  def find(id: java.util.UUID): Task[Option[MapEvent]]
   def stats(region: Option[String]): Task[List[MapEventStat]]
   // The last `hours` hours including the current one, optionally for one region
   def hourly(region: Option[String], hours: Int): Task[List[MapEventTrend]]
@@ -36,6 +37,8 @@ object QueryService:
           )
           .map(enriched => NearbyResponse(region, enriched.size, enriched))
       }
+
+    def find(id: java.util.UUID): Task[Option[MapEvent]] = events.findById(id)
 
     def recent(limit: Int): Task[RecentResponse] =
       events.findRecent(limit).map(found => RecentResponse(found.size, found))

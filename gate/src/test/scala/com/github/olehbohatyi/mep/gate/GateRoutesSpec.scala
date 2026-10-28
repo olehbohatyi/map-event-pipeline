@@ -28,6 +28,9 @@ object GateRoutesSpec extends ZIOSpecDefault:
   final class StubQuery(calls: Ref[List[(GeoPoint, Double, Int)]]) extends QueryService:
     def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[NearbyResponse] =
       calls.update(_ :+ (center, radiusKm, limit)).as(NearbyResponse("zone_50_30", 1, List(Samples.event())))
+    // Only the fixed id is stored
+    def find(id: UUID): Task[Option[MapEvent]]                                           =
+      ZIO.succeed(Option.when(id == fixedId)(Samples.event().copy(id = fixedId)))
     // Echoes the requested limit as the count, so tests can see what reached the service
     def recent(limit: Int): Task[RecentResponse]                                         =
       ZIO.succeed(RecentResponse(limit, Nil))
@@ -260,6 +263,18 @@ object GateRoutesSpec extends ZIOSpecDefault:
           body.contains("new EventSource(\"/api/v1/events/live\")"),
         )
       }
+    },
+    test("an event is found by id once stored, 404 otherwise, 400 for a malformed id") {
+      for
+        found   <- call(get(s"/api/v1/events/$fixedId"))
+        missing <- call(get("/api/v1/events/00000000-0000-0000-0000-000000000002"))
+        bad     <- call(get("/api/v1/events/not-a-uuid"))
+      yield assertTrue(
+        found._1 == Status.Ok,
+        found._2.contains(s"\"id\":\"$fixedId\""),
+        missing == (Status.NotFound, """{"error":"no stored event 00000000-0000-0000-0000-000000000002"}"""),
+        bad._1 == Status.NotFound || bad._1 == Status.BadRequest,
+      )
     },
     test("hourly uses a default of 24 hours and validates the range") {
       for

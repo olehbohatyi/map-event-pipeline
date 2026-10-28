@@ -84,6 +84,7 @@ object GateRoutes:
       GateApi.health.implement(_ => ZIO.succeed("OK")),
       GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key)),
       GateApi.nearby.implement((lat, lon, radius, limit) => getNearby(query, lat, lon, radius, limit)),
+      GateApi.event.implement(id => getEvent(query, id)),
       GateApi.recent.implement(limit => getRecent(query, limit)),
       GateApi.live.implement(bbox => liveEvents(feed, bbox)),
       GateApi.stats.implement(region => getStats(query, region)),
@@ -147,6 +148,12 @@ object GateRoutes:
     invalid match
       case Some(msg) => ZIO.fail(ApiError.BadRequest(msg))
       case None      => query.findNearby(GeoPoint(lat, lon), r, l).catchAll(internalFail("nearby query"))
+
+  private def getEvent(query: QueryService, id: java.util.UUID): IO[ApiError, MapEvent] =
+    query
+      .find(id)
+      .catchAll(internalFail("event query"))
+      .someOrFail(ApiError.NotFound(s"no stored event $id"))
 
   private def getRecent(query: QueryService, limit: Option[Int]): IO[ApiError, RecentResponse] =
     val l = limit.getOrElse(DefaultRecent)
