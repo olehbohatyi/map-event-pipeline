@@ -27,6 +27,7 @@ jobs:
           sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=load-test/' .env
           docker compose up -d --build
           for i in $(seq 1 90); do curl -sf localhost:8080/api/v1/health && break; sleep 2; done
+          curl -sf localhost:8080/api/v1/health || { echo "gate never became healthy"; docker compose logs; exit 1; }
       - name: Gatling
         run: sbt -batch --server load/run
         env:

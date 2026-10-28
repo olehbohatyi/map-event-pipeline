@@ -64,6 +64,21 @@ object PipelineSpec extends ZIOSpecDefault:
         })
     }
 
+  // Committed offset per partition of `topic` for the pipe's group, and the end offsets
+  private def progress(cfg: KafkaConfig, topic: String): Task[(Map[Int, Long], Map[Int, Long])] =
+    ZIO.scoped {
+      zio.kafka.admin.AdminClient.make(zio.kafka.admin.AdminClientSettings(cfg.servers)).flatMap { admin =>
+        for
+          committed <- admin.listConsumerGroupOffsets(cfg.consumerGroup)
+          parts      = committed.keySet.filter(_.name == topic)
+          ends      <- admin.listOffsets(parts.map(_ -> zio.kafka.admin.AdminClient.OffsetSpec.LatestSpec).toMap)
+        yield (
+          committed.collect { case (tp, o) if tp.name == topic => tp.partition -> o.offset },
+          ends.map((tp, o) => tp.partition -> o.offset),
+        )
+      }
+    }
+
   def spec = (suite("Pipeline")(
     test("an ingested event is enriched, stored and routed; malformed records go to the DLQ") {
       for
@@ -113,10 +128,28 @@ object PipelineSpec extends ZIOSpecDefault:
         dlq.forall(_.headers(RecordHandler.Headers.Error).nonEmpty),
         Set("raw publish", "raw process", "enrich", "store", "enriched publish", "hazards publish").subsetOf(trace),
       )
-    }
+    },
+    // The pipe processes partitions in parallel: every event on every partition is handled and committed
+    test("events on every partition are processed and their offsets committed") {
+      for
+        cfg       <- ZIO.service[KafkaConfig]
+        processor <- ZIO.serviceWithZIO[StreamProcessor](_.run).fork
+        gate      <- ZIO.service[IngestionService]
+        results   <- ZIO.foreach(1 to 30)(i => gate.ingest(request, Some(s"spread-$i")))
+        ids        = results.collect { case IngestionResult.Accepted(id) => id }
+        repo      <- ZIO.service[EventRepo]
+        _         <- eventually(ZIO.foreach(ids)(repo.findById).map(found => Option.when(found.forall(_.isDefined))(())))
+        caughtUp  <- eventually(
+                       progress(cfg, cfg.topics.raw).map((done, end) =>
+                         Option.when(done.size == cfg.topicSettings.partitions && done == end)(done)
+                       )
+                     )
+        _         <- processor.interrupt
+      yield assertTrue(ids.size == 30, caughtUp.size == cfg.topicSettings.partitions, caughtUp.values.forall(_ > 0))
+    },
   ) @@ TestAspect.beforeAll(
     Live.live(Migrations.run *> TopicBootstrap.run).orDie
-  ) @@ TestAspect.withLiveClock @@ TestAspect
+  ) @@ TestAspect.sequential @@ TestAspect.withLiveClock @@ TestAspect
     .timeout(5.minutes))
     .provideShared(
       TestTelemetry.recording,
