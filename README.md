@@ -1,11 +1,12 @@
 # map-event-pipeline
 
 A demo event pipeline for road sensor events, built with **Scala 3**, **ZIO 2**, **Kafka / Redpanda**,
-**PostgreSQL/PostGIS**, **Redis** and **Apache Spark**.
+**PostgreSQL/PostGIS**, **Redis**, **Apache Spark** and **OpenTelemetry**.
 
 Clients post events to an HTTP gateway, a stream processor deduplicates, enriches, escalates and routes them,
 and Spark jobs aggregate per-region statistics that the gateway serves back: a batch job for the totals and a
-Structured Streaming job for hourly counts, kept current from Kafka.
+Structured Streaming job for hourly counts, kept current from Kafka. Traces, metrics and logs from the gateway and the
+processor go to Grafana over OpenTelemetry; one trace follows an event from the HTTP request through Kafka to Postgres.
 
 ## Architecture
 
@@ -102,6 +103,8 @@ coordinates, e.g. `Kyiv City`, `Lviv Oblast`, `Autonomous Republic of Crimea`.
 | zio-json · zio-schema · zio-config · zio-logging | 1.1.1 · 1.8.7 · 4.1.0 · 2.5.3 |
 | Quill (JDBC/ZIO) · Flyway · HikariCP | 4.8.6 · 13.11.1 · 7.1.0 |
 | Chimney | 2.1.0 |
+| zio-opentelemetry · OpenTelemetry SDK | 3.1.21 · 1.67.0 |
+| grafana/otel-lgtm (collector, Tempo, Prometheus, Loki, Grafana) | 0.38.1, pinned by digest |
 | Spark | 4.2.0 |
 | Testcontainers | 2.0.5 |
 | PostgreSQL + PostGIS · Redis | 18.6 + 3.6.4 (`postgis/postgis:18-3.6-alpine`, pinned by digest) · 8.6.3 |
@@ -148,6 +151,29 @@ Open the live map at `localhost:8080/map`, then feed it:
 ```bash
 scripts/demo.sh             # 50 random events around Ukrainian cities, one every 0.5 s
 ```
+
+### Observability (OpenTelemetry)
+
+`docker compose up` also starts `grafana/otel-lgtm`: an OpenTelemetry collector with Tempo, Prometheus, Loki and
+Grafana. Grafana is at `localhost:3000` with the **Map Event Pipeline** dashboard (traffic, latency, ingest and
+processing rates, dead letters, live subscribers, recent traces, logs).
+
+- **Traces.** The gate opens a server span per request that continues the caller's `traceparent`; each Kafka record
+  carries the producer span's context in its headers, and the pipe continues it, with a span per step (dedup check,
+  enrich, escalate, store, publish). So `POST /api/v1/events` and everything the pipe does for that event are one trace
+  across both services; `PipelineSpec` checks this against real Kafka.
+- **Metrics.** Plain ZIO metrics (`mep_http_server_*`, `mep_events_ingested`, `mep_events_processed`,
+  `mep_records_dead_lettered`, `mep_event_processing_duration_ms`, `mep_live_subscribers`), plus ZIO's runtime and
+  zio-kafka's own metrics, exported through zio-opentelemetry's bridge. Unknown paths are counted as `unmatched`, so a
+  scanner cannot create unbounded labels.
+- **Logs.** ZIO logs go to Loki with the `trace_id` and `span_id` of the fiber that wrote them (Grafana links log lines
+  and traces both ways); the console output stays as it was.
+- **No Java agent.** A spike with the OpenTelemetry agent on JDK 27 lost the caller's trace at the HTTP boundary: the
+  agent keeps context in a thread-local, and ZIO moves fibers between threads. The SDK with zio-telemetry keeps the
+  context in a `FiberRef` instead (400 concurrent requests, all kept their trace), and the few boundaries — HTTP in,
+  Kafka out and in — are instrumented by hand.
+- The SDK is configured by the standard `OTEL_*` variables (compose points it at `lgtm`). Apps run with sbt export to
+  `localhost:4318`; without the container, set `OTEL_SDK_DISABLED=true`.
 
 ### Hourly trends (Spark Structured Streaming)
 
@@ -292,6 +318,7 @@ How the work is organised:
 ├── build.mill, mill          mill build + launcher
 ├── Dockerfile                build stage + gate / pipe / stat targets
 ├── docker-compose.yml        infrastructure, apps, `stat` profile (batch `stat`, streaming `trends`)
+├── observability/            Grafana dashboard and its provisioning (mounted into otel-lgtm)
 ├── scripts/verify.sh         the checks CI runs
 ├── scripts/regions/          buildSeed.sc: regenerates the region polygons from Natural Earth
 ├── CLAUDE.md, .claude/       Claude Code brief, /verify skill, scalafmt hook
@@ -303,7 +330,8 @@ How the work is organised:
 │       ├── stores/           Quill context, EventRepo, StatsRepo, Migrations, DataSource
 │       ├── broker/           ProducerService, EventCodec
 │       ├── caches/           Redis, IdempotencyCache, GeoCache
-│       └── geo/              RegionResolver
+│       ├── geo/              RegionResolver
+│       └── telemetry/        Telemetry: OpenTelemetry SDK, fiber context, logging bridge
 ├── gate/                     GateRoutes, IngestionService, QueryService, GateApp
 ├── pipe/                     StreamProcessor, EventHandler, Dedup/Enrichment/Escalation, PipeApp
 ├── stat/                     EventAggregator, StatApp (batch); Trends, TrendsApp (streaming)
