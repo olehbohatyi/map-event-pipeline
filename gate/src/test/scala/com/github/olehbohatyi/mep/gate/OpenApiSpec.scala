@@ -57,6 +57,7 @@ object OpenApiSpec extends ZIOSpecDefault:
             "/api/v1/health",
             "/api/v1/events",
             "/api/v1/events/nearby",
+            "/api/v1/events/{id}",
             "/api/v1/events/recent",
             "/api/v1/events/live",
             "/api/v1/stats",

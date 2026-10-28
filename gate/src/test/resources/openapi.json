@@ -273,6 +273,17 @@
         ],
         "type" : "object"
       },
+      "NotFound" : {
+        "properties" : {
+          "error" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "error"
+        ],
+        "type" : "object"
+      },
       "RecentResponse" : {
         "properties" : {
           "count" : {
@@ -589,6 +600,52 @@
               "application/json" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/{id}" : {
+      "get" : {
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "id",
+            "required" : true,
+            "schema" : {
+              "format" : "uuid",
+              "type" : "string"
+            },
+            "style" : "simple"
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MapEvent"
+                }
+              }
+            },
+            "description" : "The event, once the pipe has stored it.\n\n"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/NotFound"
                 }
               }
             }

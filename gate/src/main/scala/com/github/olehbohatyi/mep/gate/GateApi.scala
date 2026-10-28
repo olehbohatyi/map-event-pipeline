@@ -13,8 +13,8 @@ import zio.stream.{ ZPipeline, ZSink }
 
 import java.nio.charset.StandardCharsets.UTF_8
 
-/** The HTTP contract of the gate: the endpoints are the single source for both the routes and the OpenAPI document.
-  */
+import com.github.olehbohatyi.mep.domain.MapEvent
+
 object GateApi:
 
   /** JSON content codec that encodes with zio-json (the wire format stays exactly what clients already get, e.g. absent
@@ -81,6 +81,16 @@ object GateApi:
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
 
+  // A primary-key read: lets a client (or the load test's probe) see when its event has been stored
+  val event =
+    Endpoint(Method.GET / "api" / "v1" / "events" / PathCodec.uuid("id"))
+      .out[MapEvent](Doc.p("The event, once the pipe has stored it."))
+      .invalidRequestAsJson
+      .outErrors[ApiError](
+        HttpCodec.error[ApiError.NotFound](Status.NotFound),
+        HttpCodec.error[ApiError.Internal](Status.InternalServerError),
+      )
+
   val recent =
     Endpoint(Method.GET / "api" / "v1" / "events" / "recent")
       .query(
@@ -134,7 +144,7 @@ object GateApi:
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
 
-  val endpoints = List(health, ingest, nearby, recent, live, stats, hourly)
+  val endpoints = List(health, ingest, nearby, event, recent, live, stats, hourly)
 
   val openApi: OpenAPI =
     val generated = OpenAPIGen.fromEndpoints("Map Event Pipeline API", "1.0.0", endpoints.head, endpoints.tail*)
