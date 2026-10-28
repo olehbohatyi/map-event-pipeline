@@ -5,19 +5,23 @@ import zio.kafka.consumer.Consumer
 
 import javax.sql.DataSource
 
-import com.github.olehbohatyi.mep.AppLogging
 import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RedisService }
 import com.github.olehbohatyi.mep.config.{ AppConfig, KafkaConfig }
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, RegionRepo }
+import com.github.olehbohatyi.mep.telemetry.Telemetry
 
-object PipeApp extends ZIOAppDefault:
+object PipeApp extends ZIOApp:
 
-  override val bootstrap: ZLayer[ZIOAppArgs, Any, Any] = AppLogging.live
+  type Environment = Telemetry.Env
+  val environmentTag: EnvironmentTag[Environment]       = EnvironmentTag[Environment]
+  val bootstrap: ZLayer[ZIOAppArgs, Any, Telemetry.Env] = Telemetry.bootstrap("pipe")
 
-  def run: ZIO[Any, Throwable, Unit] =
-    program.provide(
+  def run: ZIO[Telemetry.Env, Throwable, Unit] =
+    program.provideSome[Telemetry.Env](
+      Telemetry.tracing,
+      Telemetry.metrics,
       AppConfig.all,
       DataSourceLayer.live,
       EventRepo.live,

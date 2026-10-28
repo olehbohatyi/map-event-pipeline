@@ -6,7 +6,13 @@ import zio.http.codec.PathCodec
 import zio.http.endpoint.openapi.SwaggerUI
 import zio.json.*
 import zio.stream.ZStream
+import zio.telemetry.opentelemetry.common.{ Attribute, Attributes }
+import zio.telemetry.opentelemetry.context.IncomingContextCarrier
+import zio.telemetry.opentelemetry.tracing.Tracing
+import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
+import io.opentelemetry.api.trace.{ SpanKind, StatusCode }
+import scala.collection.mutable
 import com.github.olehbohatyi.mep.domain.{ GeoPoint, MapEvent }
 
 object GateRoutes:
@@ -30,10 +36,42 @@ object GateRoutes:
   private val DefaultHours  = 24
   private val MaxHours      = 168
 
-  def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
-    api(ingestion, query, feed) ++
-      SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
-      Routes(Method.GET / "map" -> mapPage)
+  def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed, tracing: Tracing): Routes[Any, Nothing] =
+    observed(tracing)(
+      api(ingestion, query, feed) ++
+        SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
+        Routes(Method.GET / "map" -> mapPage) ++
+        // Unknown paths answer 404 from a real route, so they are traced and counted too: zio-http's server merges the
+        // app into its own (`++` keeps the left side's not-found handler), so a wrapped not-found handler is lost
+        Routes(Method.ANY / trailing -> Handler.notFound)
+    )
+
+  /** A server span per request that continues the caller's `traceparent` (the producer span and the pipe's spans then
+    * join the same trace), plus request count and latency. For the live stream both cover the response head only.
+    */
+  private def observed(tracing: Tracing)(routes: Routes[Any, Nothing]): Routes[Any, Nothing] =
+    routes.transform { handle =>
+      // The request's own scope, which zio-http opens per request and closes after the response (body included)
+      Handler.scoped[Any](Handler.fromFunctionZIO[Request] { req =>
+        val path    = req.path.encode
+        val headers =
+          mutable.Map.from(req.headers.toList.map(h => h.headerName.toString.toLowerCase -> h.renderedValue))
+        tracing.extractSpan(
+          TraceContextPropagator.default,
+          IncomingContextCarrier.default(headers),
+          s"${req.method} $path",
+          SpanKind.SERVER,
+          Attributes(Attribute.string("http.request.method", req.method.toString), Attribute.string("url.path", path)),
+        ) {
+          handle(req).merge.timed.flatMap { (took, res) =>
+            val route = if res.status == Status.NotFound then "unmatched" else path
+            tracing.setAttribute("http.response.status_code", res.status.code.toLong) *>
+              tracing.getCurrentSpanUnsafe.map(_.setStatus(StatusCode.ERROR)).when(res.status.isServerError) *>
+              GateMetrics.request(req.method.toString, route, res.status.code, took).as(res)
+          }
+        }
+      })
+    }
 
   // Served from the jar, whose entries carry a fixed timestamp (and the ETag only that and the size), so browsers would
   // treat the page as fresh for years and keep an old version after a deploy. It is small: never cache it.
@@ -68,6 +106,10 @@ object GateRoutes:
     notInTheFuture(req) *>
       ingestion
         .ingest(req, idempotencyKey.map(_.trim).filter(_.nonEmpty))
+        .tap {
+          case IngestionResult.Accepted(_)  => GateMetrics.ingest(req, "accepted")
+          case IngestionResult.Duplicate(_) => GateMetrics.ingest(req, "duplicate")
+        }
         .mapBoth(
           err => err,
           {

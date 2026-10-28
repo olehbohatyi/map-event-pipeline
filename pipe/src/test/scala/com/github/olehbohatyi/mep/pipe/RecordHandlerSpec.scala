@@ -31,6 +31,7 @@ object RecordHandlerSpec extends ZIOSpecDefault:
       RecordingProducer.layer,
       stub(failures),
       ZLayer.succeed(TestKafka.config()),
+      TestTelemetry.tracing,
       RecordHandler.withRetry(noDelayRetry),
     )
 

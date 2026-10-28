@@ -11,6 +11,8 @@ object Versions {
   val zioRedis   = "1.3.0"
   val zioJson    = "1.1.1"
   val zioSchema  = "1.8.7"
+  val zioOtel    = "3.1.21"
+  val otel       = "1.67.0"
   val zioLogging = "2.5.3"
   val quill      = "4.8.6"
   val postgres   = "42.7.14"
@@ -70,6 +72,16 @@ object Dependencies {
     ExclusionRule("org.apache.spark", "spark-tags_2.13"),
   )
 
+  // Traces, metrics and logs over OTLP: the SDK is configured from the standard OTEL_* environment variables
+  val telemetry   = Seq(
+    "dev.zio"         %% "zio-opentelemetry"                         % Versions.zioOtel,
+    "io.opentelemetry" % "opentelemetry-sdk"                         % Versions.otel,
+    "io.opentelemetry" % "opentelemetry-exporter-otlp"               % Versions.otel,
+    "io.opentelemetry" % "opentelemetry-sdk-extension-autoconfigure" % Versions.otel,
+  )
+  // In-memory exporters, to assert span structure in tests
+  val otelTesting = "io.opentelemetry" % "opentelemetry-sdk-testing" % Versions.otel % Test
+
   val zioTest = Seq(
     "dev.zio" %% "zio-test"     % Versions.zio % Test,
     "dev.zio" %% "zio-test-sbt" % Versions.zio % Test,
@@ -95,7 +107,9 @@ object Dependencies {
         flywayPg,
         logback,
         chimney,
+        otelTesting,
       ) ++
+      telemetry ++
       zioTest
 
   val gateDeps: Seq[ModuleID] = Seq(zioHttp) ++ zioTest

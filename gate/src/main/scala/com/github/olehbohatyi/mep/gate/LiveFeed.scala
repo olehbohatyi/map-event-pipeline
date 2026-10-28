@@ -93,10 +93,12 @@ object LiveFeed:
       ZStream.unwrapScoped(
         for
           queue <- hub.subscribe
-          _     <- ZIO.acquireRelease(count.update(_ + 1))(_ => count.update(_ - 1))
+          _     <- ZIO.acquireRelease(gauge(count.updateAndGet(_ + 1)))(_ => gauge(count.updateAndGet(_ - 1)))
         yield ZStream.fromQueue(queue).filter(e => area.forall(_.contains(e.location)))
       )
 
     def subscribers: UIO[Int] = count.get
+
+    private def gauge(update: UIO[Int]): UIO[Unit] = update.flatMap(n => GateMetrics.liveSubscribers.set(n.toDouble))
 
     def close: UIO[Unit] = hub.shutdown
