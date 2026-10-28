@@ -103,7 +103,20 @@ object stat extends MepModule {
   )
   def mainClass      = Some("com.github.olehbohatyi.mep.stat.StatApp")
   def compileMvnDeps = Seq(mvn"org.apache.spark:spark-sql_2.13:${V.spark}")
-  def mvnDeps        = Seq(mvn"org.postgresql:postgresql:${V.postgres}")
+  // The Kafka source is not in the apache/spark image, so it goes into the jar, without what the image already ships
+  def mvnDeps        = Seq(
+    mvn"org.postgresql:postgresql:${V.postgres}",
+    mvn"org.apache.spark:spark-sql-kafka-0-10_2.13:${V.spark}".exclude(
+      "org.apache.hadoop" -> "*",
+      "at.yawk.lz4" -> "*",
+      "org.xerial.snappy" -> "*",
+      "org.slf4j" -> "*",
+      "com.google.code.findbugs" -> "*",
+      "org.scala-lang" -> "*",
+      "org.scala-lang.modules" -> "*",
+      "org.apache.spark" -> "spark-tags_2.13"
+    )
+  )
   // A plain jar for spark-submit, without mill's launcher script prepended
   def prependShellScript = ""
   // Spark provides scala-library 2.13; keep only scala3-library in the fat jar
