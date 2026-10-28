@@ -30,23 +30,29 @@ object StreamProcessor:
       handler: RecordHandler,
     ) extends StreamProcessor:
 
-    // Offsets are committed in batches, and only for records the handler has finished with
+    /** Partitions are processed in parallel, each in order: an event's partition follows its id (the record key), so
+      * order only matters within one. Offsets are committed in batches (the latest per partition), and only for records
+      * the handler has finished with. Before this, one sequential stream over all partitions capped the pipe at about
+      * 24 events/s (load test baseline).
+      */
     def run: Task[Unit] =
       consumer
-        .plainStream(Subscription.topics(kafka.topics.raw), Serde.string, Serde.string)
-        .mapZIO { record =>
-          // The last value of each header wins, as Kafka's own lastHeader does
-          val headers = record.record.headers.toArray.map(h => h.key -> String(h.value, UTF_8)).toMap
-          val raw     =
-            RawRecord(
-              record.record.topic,
-              record.partition,
-              record.offset.offset,
-              Option(record.key),
-              record.value,
-              headers,
-            )
-          handler.handle(raw).as(record.offset)
+        .partitionedStream(Subscription.topics(kafka.topics.raw), Serde.string, Serde.string)
+        .flatMapPar(Int.MaxValue) { (_, partition) =>
+          partition.mapZIO { record =>
+            // The last value of each header wins, as Kafka's own lastHeader does
+            val headers = record.record.headers.toArray.map(h => h.key -> String(h.value, UTF_8)).toMap
+            val raw     =
+              RawRecord(
+                record.record.topic,
+                record.partition,
+                record.offset.offset,
+                Option(record.key),
+                record.value,
+                headers,
+              )
+            handler.handle(raw).as(record.offset)
+          }
         }
         .aggregateAsync(Consumer.offsetBatches)
         .mapZIO(_.commit)
