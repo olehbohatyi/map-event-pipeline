@@ -157,12 +157,16 @@ serves it.
 
 - Windows are by `createdAt`, the gate's receive time. Spark's watermark follows the newest event time seen, so
   windowing by the client's `occurredAt` would let one wrong clock mark every later event as late.
-- Events more than 10 minutes behind the newest one seen are dropped as late; the batch job still counts them.
+- Events more than 10 minutes behind the newest one seen are dropped as late (the batch job still counts them); the
+  job logs how many each batch dropped, from Spark's progress report.
 - The pipe may publish an event twice after a retry: duplicates are dropped by id within the watermark.
 - Each micro-batch carries the full count of every window it changed (update mode) and is upserted, so a batch that
   Spark replays after a crash writes the same values again. Checked: forcing a replay restored a count edited by hand.
 - The checkpoint (Kafka offsets and de-duplication state) lives in the `trends_checkpoint` volume. A fresh checkpoint
-  starts from the oldest retained record, so the table is backfilled from the topic's retention (7 days) first.
+  starts from the oldest retained record, so the table is backfilled from the topic's retention (7 days) first. If
+  the job was stopped for longer than the retention, it continues from the oldest record left (`failOnDataLoss`
+  off) instead of failing on every restart; the counts for the expired hours are lost either way.
+- Each batch's counts are written in one transaction, so `/stats/hourly` never shows half a batch.
 - The Kafka source is not part of the `apache/spark` image, so `stat.jar` bundles it, without the jars the image
   already ships (Hadoop client, compression codecs, slf4j, Scala, `spark-tags`).
 - The tests run the same query over text files with an in-memory sink (no Kafka, Postgres or Dataset encoders);
