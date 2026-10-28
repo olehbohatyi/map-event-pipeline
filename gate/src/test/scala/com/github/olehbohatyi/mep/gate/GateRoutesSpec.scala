@@ -10,7 +10,7 @@ import java.time.Instant
 import java.util.UUID
 
 import com.github.olehbohatyi.mep.domain.*
-import com.github.olehbohatyi.mep.stores.MapEventStat
+import com.github.olehbohatyi.mep.stores.{ MapEventStat, MapEventTrend }
 import com.github.olehbohatyi.mep.testkit.Samples
 
 object GateRoutesSpec extends ZIOSpecDefault:
@@ -32,6 +32,11 @@ object GateRoutesSpec extends ZIOSpecDefault:
       ZIO.succeed(RecentResponse(limit, Nil))
     def stats(region: Option[String]): Task[List[MapEventStat]]                          =
       ZIO.succeed(List(MapEventStat(region.getOrElse("all"), EventType.Hazard, 3, Instant.EPOCH)))
+    // One row per requested hour, so tests can see what reached the service
+    def hourly(region: Option[String], hours: Int): Task[List[MapEventTrend]]            =
+      ZIO.succeed(
+        List.fill(hours)(MapEventTrend(Instant.EPOCH, region.getOrElse("all"), EventType.Sign, 1, Instant.EPOCH))
+      )
 
   // For the tests that do not stream: no events, no subscribers
   private object NoFeed extends LiveFeed:
@@ -252,6 +257,21 @@ object GateRoutesSpec extends ZIOSpecDefault:
           body.contains("new EventSource(\"/api/v1/events/live\")"),
         )
       }
+    },
+    test("hourly uses a default of 24 hours and validates the range") {
+      for
+        default <- call(get("/api/v1/stats/hourly?region=Kyiv%20City"))
+        two     <- call(get("/api/v1/stats/hourly?hours=2"))
+        zero    <- call(get("/api/v1/stats/hourly?hours=0"))
+        tooMany <- call(get("/api/v1/stats/hourly?hours=169"))
+      yield assertTrue(
+        default._1 == Status.Ok,
+        default._2.startsWith("""{"region":"Kyiv City","hours":24,"counts":[{"windowStart":"1970-01-01T00:00:00Z""""),
+        default._2.split("windowStart").length == 25,
+        two._2.startsWith("""{"hours":2,"counts":["""),
+        zero == (Status.BadRequest, """{"error":"hours must be within [1, 168]"}"""),
+        tooMany._1 == Status.BadRequest,
+      )
     },
     test("stats by region") {
       call(get("/api/v1/stats?region=zone_1_2"))

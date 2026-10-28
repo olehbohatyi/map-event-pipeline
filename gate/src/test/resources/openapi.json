@@ -77,6 +77,31 @@
         ],
         "type" : "object"
       },
+      "HourlyResponse" : {
+        "properties" : {
+          "counts" : {
+            "items" : {
+              "$ref" : "#/components/schemas/MapEventTrend"
+            },
+            "type" : "array"
+          },
+          "hours" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "region" : {
+            "type" : [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required" : [
+          "hours",
+          "counts"
+        ],
+        "type" : "object"
+      },
       "IngestAccepted" : {
         "properties" : {
           "id" : {
@@ -188,6 +213,36 @@
           }
         },
         "required" : [
+          "region",
+          "eventType",
+          "count",
+          "updatedAt"
+        ],
+        "type" : "object"
+      },
+      "MapEventTrend" : {
+        "properties" : {
+          "count" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "eventType" : {
+            "$ref" : "#/components/schemas/EventType"
+          },
+          "region" : {
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "windowStart" : {
+            "format" : "date-time",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "windowStart",
           "region",
           "eventType",
           "count",
@@ -590,6 +645,63 @@
               }
             },
             "description" : "Event counts per region and type, as aggregated by the stat job.\n\n"
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats/hourly" : {
+      "get" : {
+        "parameters" : [
+          {
+            "allowReserved" : false,
+            "description" : "Only this region; all regions when absent.\n\n",
+            "in" : "query",
+            "name" : "region",
+            "schema" : {
+              "type" : "string"
+            },
+            "style" : "form"
+          },
+          {
+            "allowReserved" : false,
+            "description" : "How many hours back, the current one included, within [1, 168]; default 24.\n\n",
+            "in" : "query",
+            "name" : "hours",
+            "schema" : {
+              "format" : "int32",
+              "type" : "integer"
+            },
+            "style" : "form"
+          }
+        ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/HourlyResponse"
+                }
+              }
+            },
+            "description" : "Event counts per hour (UTC, by the gate's receive time), region and type, kept current by the streaming job.\n\n"
+          },
+          "400" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/BadRequest"
+                }
+              }
+            }
           },
           "500" : {
             "content" : {

@@ -16,6 +16,7 @@ object GateRoutes:
   // GET  /api/v1/events/recent — the latest events, newest first
   // GET  /api/v1/events/live   — server-sent events as the pipe finishes them, optionally within ?bbox=
   // GET  /api/v1/stats         — aggregated counts, optionally ?region=
+  // GET  /api/v1/stats/hourly  — hourly counts from the streaming job, optionally ?region= and ?hours=
   // GET  /api/v1/health        — liveness probe
   // GET  /docs/openapi         — Swagger UI over the generated OpenAPI document (assets come from unpkg.com)
   // GET  /map                  — live map page (Leaflet and OpenStreetMap tiles load from the internet)
@@ -26,6 +27,8 @@ object GateRoutes:
   private val Heartbeat     = 15.seconds
   // How far ahead of the gate's clock a client's occurredAt may be (clock drift), before it is rejected
   private val MaxClockSkew  = 5.minutes
+  private val DefaultHours  = 24
+  private val MaxHours      = 168
 
   def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
     api(ingestion, query, feed) ++
@@ -46,6 +49,7 @@ object GateRoutes:
       GateApi.recent.implement(limit => getRecent(query, limit)),
       GateApi.live.implement(bbox => liveEvents(feed, bbox)),
       GateApi.stats.implement(region => getStats(query, region)),
+      GateApi.hourly.implement((region, hours) => getHourly(query, region, hours)),
     ).transform(_.contramap[Request](readBodyAsJson))
 
   // Bodies are JSON whatever Content-Type the client sends (`curl -d` says form-urlencoded), as before the Endpoint API;
@@ -129,6 +133,12 @@ object GateRoutes:
   private def getStats(query: QueryService, region: Option[String]): IO[ApiError.Internal, StatsResponse] =
     val filter = region.filter(_.nonEmpty)
     query.stats(filter).map(StatsResponse(filter, _)).catchAll(internalFail("stats query"))
+
+  private def getHourly(query: QueryService, region: Option[String], hours: Option[Int]): IO[ApiError, HourlyResponse] =
+    val filter = region.filter(_.nonEmpty)
+    val h      = hours.getOrElse(DefaultHours)
+    if h <= 0 || h > MaxHours then ZIO.fail(ApiError.BadRequest(s"hours must be within [1, $MaxHours]"))
+    else query.hourly(filter, h).map(HourlyResponse(filter, h, _)).catchAll(internalFail("hourly query"))
 
   private def internalFail(op: String)(err: Throwable): IO[ApiError.Internal, Nothing] =
     internal(op)(err).flatMap(ZIO.fail(_))
