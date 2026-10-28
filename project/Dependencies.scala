@@ -57,6 +57,19 @@ object Dependencies {
   val chimney  = "io.scalaland"    %% "chimney"                    % Versions.chimney
   val sparkSql = "org.apache.spark" % "spark-sql_2.13"             % Versions.spark
 
+  // The Kafka source is not in the apache/spark image, so it goes into stat.jar — without what the image already
+  // ships at the same versions (Hadoop client, compression codecs, slf4j, Scala, spark-tags)
+  val sparkKafka = ("org.apache.spark" % "spark-sql-kafka-0-10_2.13" % Versions.spark).excludeAll(
+    ExclusionRule("org.apache.hadoop"),
+    ExclusionRule("at.yawk.lz4"),
+    ExclusionRule("org.xerial.snappy"),
+    ExclusionRule("org.slf4j"),
+    ExclusionRule("com.google.code.findbugs"),
+    ExclusionRule("org.scala-lang"),
+    ExclusionRule("org.scala-lang.modules"),
+    ExclusionRule("org.apache.spark", "spark-tags_2.13"),
+  )
+
   val zioTest = Seq(
     "dev.zio" %% "zio-test"     % Versions.zio % Test,
     "dev.zio" %% "zio-test-sbt" % Versions.zio % Test,
@@ -90,5 +103,5 @@ object Dependencies {
   val itDeps: Seq[ModuleID]   = zioTest ++ testcontainers
 
   // Spark ships its own Scala 2.13 stdlib and runtime; only the JDBC driver goes into the assembly
-  val statDeps: Seq[ModuleID] = Seq(sparkSql % Provided, postgres) ++ zioTest
+  val statDeps: Seq[ModuleID] = Seq(sparkSql % Provided, sparkKafka, postgres) ++ zioTest
 }

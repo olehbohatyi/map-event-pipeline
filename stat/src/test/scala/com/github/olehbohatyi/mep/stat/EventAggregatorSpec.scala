@@ -9,20 +9,6 @@ import scala.jdk.CollectionConverters.*
 
 object EventAggregatorSpec extends ZIOSpecDefault:
 
-  private val spark: ZLayer[Any, Throwable, SparkSession] =
-    ZLayer.scoped(
-      ZIO.acquireRelease(
-        ZIO.attemptBlocking(
-          SparkSession
-            .builder()
-            .master("local[1]")
-            .appName("stat-test")
-            .config("spark.ui.enabled", "false")
-            .getOrCreate()
-        )
-      )(s => ZIO.attemptBlocking(s.stop()).orDie)
-    )
-
   private val schema = StructType(
     Seq(
       StructField("region", StringType, nullable = true),
@@ -53,4 +39,4 @@ object EventAggregatorSpec extends ZIOSpecDefault:
                    }
       yield assertTrue(result == Set(("zone_1_2", "Hazard", 2L), ("zone_1_2", "Sign", 1L), ("zone_3_4", "Hazard", 1L)))
     }
-  ).provideLayerShared(spark) @@ TestAspect.withLiveClock
+  ).provideLayerShared(TestSpark.layer) @@ TestAspect.withLiveClock
