@@ -22,6 +22,7 @@ object Versions {
   val chimney    = "2.1.0"
   val spark      = "4.2.0"
   val testcont   = "2.0.5"
+  val gatling    = "3.16.0"
 }
 
 object Dependencies {
@@ -115,6 +116,8 @@ object Dependencies {
   val gateDeps: Seq[ModuleID] = Seq(zioHttp) ++ zioTest
   val pipeDeps: Seq[ModuleID] = zioTest
   val itDeps: Seq[ModuleID]   = zioTest ++ testcontainers
+  // Gatling is built on the Scala 2.13 library; its Java DSL is used from Scala 3
+  val loadDeps: Seq[ModuleID] = Seq("io.gatling.highcharts" % "gatling-charts-highcharts" % Versions.gatling)
 
   // Spark ships its own Scala 2.13 stdlib and runtime; only the JDBC driver goes into the assembly
   val statDeps: Seq[ModuleID] = Seq(sparkSql % Provided, sparkKafka, postgres) ++ zioTest
