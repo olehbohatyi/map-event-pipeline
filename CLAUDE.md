@@ -66,6 +66,9 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   `io.gatling.javaapi.core` (its package also has an `exec`), and the forked JVM needs
   `--add-opens=java.base/java.lang=ALL-UNNAMED`. A probe must not add load that grows with latency (it polls the
   event by id). The pipe processes partitions in parallel, in order within each; keep it that way.
+- Helm chart (`deploy/helm/map-event-pipeline`): Kafka's advertised listener must be its own Service name
+  (`<release>-kafka:9092`); apps wait for Postgres/Kafka in init containers; images are loaded into kind
+  (`pullPolicy: Never`). The `k8s` CI job installs it on kind and runs `scripts/k8s-smoke.sh`.
 - Compose: `--profile stat` replaces `COMPOSE_PROFILES` from `.env` (no broker then); use
   `COMPOSE_PROFILES=kafka,stat docker compose …`.
 - Quill 4.8 pulls zio-json 0.7; it is excluded in both builds because zio-json 1.x is used. Import Quill's

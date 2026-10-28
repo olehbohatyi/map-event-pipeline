@@ -175,6 +175,25 @@ processing rates, dead letters, live subscribers, recent traces, logs).
 - The SDK is configured by the standard `OTEL_*` variables (compose points it at `lgtm`). Apps run with sbt export to
   `localhost:4318`; without the container, set `OTEL_SDK_DISABLED=true`.
 
+### Kubernetes (Helm)
+
+`deploy/helm/map-event-pipeline` deploys the gate (Service, readiness and liveness on `/api/v1/health`) and the pipe,
+with init containers that wait for Postgres and Kafka. `infra.enabled` (default) adds single-replica Postgres
+(PostGIS), Redis and Kafka as StatefulSets for development and CI; turn it off and set `postgres.url`,
+`redis.host` and `kafka.bootstrapServers` to use real services. `lgtm.enabled` adds grafana/otel-lgtm (about 1.2 GiB
+more); without it the apps run with OpenTelemetry disabled. The Postgres password comes from `postgres.password` or
+an existing Secret (`postgres.existingSecret`) — the chart has no default.
+
+```bash
+docker build --target gate -t map-event-gate:latest . && docker build --target pipe -t map-event-pipe:latest .
+kind create cluster --name mep
+kind load docker-image map-event-gate:latest map-event-pipe:latest --name mep
+helm install mep deploy/helm/map-event-pipeline --set postgres.password=change-me --wait
+scripts/k8s-smoke.sh mep          # posts an event and waits until the pipe has stored it
+```
+
+CI does the same in the `k8s` job on every push. The stack without lgtm used about 2.2 GiB in a kind cluster.
+
 ### Load testing (Gatling)
 
 `load` is a Gatling 3.16 simulation, written with Gatling's Java DSL from Scala 3 (its Scala DSL is built for 2.13),
@@ -351,6 +370,7 @@ How the work is organised:
 ├── build.mill, mill          mill build + launcher
 ├── Dockerfile                build stage + gate / pipe / stat targets
 ├── docker-compose.yml        infrastructure, apps, `stat` profile (batch `stat`, streaming `trends`)
+├── deploy/helm/              Helm chart (gate, pipe, optional in-cluster infra and otel-lgtm)
 ├── observability/            Grafana dashboard and its provisioning (mounted into otel-lgtm)
 ├── scripts/verify.sh         the checks CI runs
 ├── scripts/regions/          buildSeed.sc: regenerates the region polygons from Natural Earth
