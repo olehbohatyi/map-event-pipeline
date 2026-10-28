@@ -50,3 +50,32 @@ jobs:
         run: |
           cp .env.example .env
           docker compose --profile stat build
+
+  # The Helm chart on a kind cluster: install with in-cluster Postgres, Redis and Kafka, then post an event and wait
+  # until the pipe has stored it
+  k8s:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build images
+        run: |
+          docker build --target gate -t map-event-gate:latest .
+          docker build --target pipe -t map-event-pipe:latest .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: mep
+      - name: Load images and install the chart
+        run: |
+          kind load docker-image map-event-gate:latest map-event-pipe:latest --name mep
+          helm lint deploy/helm/map-event-pipeline --set postgres.password=ci
+          helm install mep deploy/helm/map-event-pipeline --set postgres.password=ci --wait --timeout 10m
+      - name: Smoke test
+        run: scripts/k8s-smoke.sh mep
+      - name: Show the cluster on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe pods | tail -100
+          kubectl logs deploy/mep-gate --all-containers --tail=100 || true
+          kubectl logs deploy/mep-pipe --all-containers --tail=100 || true
