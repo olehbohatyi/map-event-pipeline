@@ -3,6 +3,7 @@
 #   cp .env.example .env              # once; pick the broker in COMPOSE_PROFILES
 #   docker compose up -d --build      # postgres, redis, broker, gate, pipe
 #   docker compose run --rm stat      # Spark aggregation job (profile: stat)
+#   docker compose --profile stat up -d trends   # Spark streaming job: hourly counts (profile: stat)
 #
 # Both brokers answer to the network alias `broker`, so the apps need no
 # per-profile settings. From the host use localhost:${KAFKA_PORT} / ${REDPANDA_PORT}.
@@ -183,6 +184,30 @@ services:
     environment:
       <<: *app-env
 
+  # Streaming job: keeps map_event_trends (hourly counts per region and type) up to date from map.events.enriched.
+  # The gate and pipe create the topics and run the migrations; until both exist the job fails and is restarted.
+  trends:
+    build:
+      context: .
+      target: stat
+    image: map-event-stat:latest
+    container_name: mep-trends
+    profiles: [stat]
+    restart: unless-stopped
+    command: ["--class", "com.github.olehbohatyi.mep.stat.TrendsApp", "/opt/mep/stat.jar"]
+    depends_on:
+      <<: *broker-deps
+      postgres:
+        condition: service_healthy
+      pipe:
+        condition: service_started
+    environment:
+      <<: *app-env
+      TRENDS_CHECKPOINT_DIR: /var/lib/mep/trends
+    volumes:
+      # Kafka offsets and de-duplication state: without it a restart would count the retained history again
+      - trends_checkpoint:/var/lib/mep/trends
+
   # One-shot batch job: docker compose run --rm stat
   stat:
     build:
@@ -199,6 +224,7 @@ services:
       <<: *app-env
 
 volumes:
+  trends_checkpoint:
   postgres_data:
   redis_data:
   kafka_data:

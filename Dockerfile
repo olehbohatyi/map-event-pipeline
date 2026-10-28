@@ -50,8 +50,14 @@ COPY --from=build --chown=mep:mep /out/pipe/ ./
 USER mep
 ENTRYPOINT ["bin/pipe"]
 
-# ── stat: Spark batch job (Spark 4.x runs on Java 21) ────────────────────────
+# ── stat: Spark batch and streaming jobs (Spark 4.x runs on Java 21) ─────────
 FROM apache/spark:4.2.0-scala2.13-java21-ubuntu AS stat
 COPY --from=build /out/stat.jar /opt/mep/stat.jar
-ENTRYPOINT ["/opt/spark/bin/spark-submit", "--master", "local[*]", \
-            "--class", "com.github.olehbohatyi.mep.stat.StatApp", "/opt/mep/stat.jar"]
+# The streaming job's checkpoint. Created here, owned by the image's `spark` user, so that a new named volume mounted
+# on it inherits that owner and the job can write to it
+USER root
+RUN mkdir -p /var/lib/mep/trends && chown spark:spark /var/lib/mep/trends
+USER spark
+# The batch job by default; compose runs the streaming job with `--class ...TrendsApp /opt/mep/stat.jar`
+ENTRYPOINT ["/opt/spark/bin/spark-submit", "--master", "local[*]"]
+CMD ["--class", "com.github.olehbohatyi.mep.stat.StatApp", "/opt/mep/stat.jar"]
