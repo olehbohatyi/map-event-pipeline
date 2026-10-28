@@ -175,6 +175,38 @@ processing rates, dead letters, live subscribers, recent traces, logs).
 - The SDK is configured by the standard `OTEL_*` variables (compose points it at `lgtm`). Apps run with sbt export to
   `localhost:4318`; without the container, set `OTEL_SDK_DISABLED=true`.
 
+### Load testing (Gatling)
+
+`load` is a Gatling 3.16 simulation, written with Gatling's Java DSL from Scala 3 (its Scala DSL is built for 2.13),
+run against a running stack:
+
+```bash
+LOAD_PROFILE=baseline sbt -batch --server load/run   # smoke (default), baseline or stress; GATE_URL to point elsewhere
+```
+
+It mixes clients posting events (about one in ten retries a key, so duplicates take the 200 path), map clients
+querying (`nearby`, `recent`, `hourly`) and following `/live` (each must receive an event), and a probe that posts an
+event and polls `GET /api/v1/events/{id}` until it is stored — its group's duration is the end-to-end latency. The run
+fails when more than 1% of requests fail or a p95 limit is exceeded; the HTML report lands in `target/gatling`. The
+**Load test** workflow runs a profile on demand in CI and keeps the report.
+
+Baseline profile (50 ingests/s, 20 queries/s, 10 live clients, 60 s) on a laptop (Docker Desktop, 4 CPUs, 3.8 GiB):
+
+| | pipe processing one record at a time | partitions in parallel |
+|---|---|---|
+| HTTP errors | 0 | 0 |
+| all requests p95 / p99 | 12.2 s / 17.1 s | **335 ms / 864 ms** |
+| `POST /api/v1/events` p95 | 13.2 s | **546 ms** |
+| ingest → stored p95 | 42 s | **5.1 s** |
+| probes not stored within 60 s | 34 % | **0 %** |
+
+- The first run (and the traces in Tempo) showed the pipe topping out at about 24 events/s: one sequential stream
+  over all partitions, ~30 ms per event. Processing partitions in parallel, each in order, takes it to the ingest rate.
+- The first probe polled `/recent?limit=200`; as latency grew, its polling became two thirds of all requests and loaded
+  the gate it was measuring. It now looks the event up by id.
+- Still open: the gate's producer waits longer for Kafka's acknowledgement than the pipe's on the same broker (p50
+  59 ms vs 8 ms), so the baseline's own limits (POST p95 < 500 ms, end to end < 3 s) are not met yet.
+
 ### Hourly trends (Spark Structured Streaming)
 
 `TrendsApp` (in `stat`, run by the `trends` compose service) reads `map.events.enriched` and keeps
@@ -223,6 +255,7 @@ shows type, region, description and time.
 |---|---|---|
 | `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `400` invalid. |
 | `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Exact great-circle distance, nearest first, plus the region of the query point. |
+| `GET` | `/api/v1/events/{id}` | The event once the pipe has stored it; `404` before that. |
 | `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest events by occurrence time, newest first. |
 | `GET` | `/api/v1/events/live` | Server-sent events (`event: event`, `id`, `data: <MapEvent JSON>`), one per event the pipe finishes, plus a `:heartbeat` comment every 15 s. Optional `bbox=minLon,minLat,maxLon,maxLat`. |
 | `GET` | `/api/v1/stats` | Optional `region`. |
@@ -335,5 +368,6 @@ How the work is organised:
 ├── gate/                     GateRoutes, IngestionService, QueryService, GateApp
 ├── pipe/                     StreamProcessor, EventHandler, Dedup/Enrichment/Escalation, PipeApp
 ├── stat/                     EventAggregator, StatApp (batch); Trends, TrendsApp (streaming)
+├── load/                     Gatling simulation (Java DSL from Scala 3) and its profiles
 └── it/                       Testcontainers specs
 ```

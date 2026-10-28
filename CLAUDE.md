@@ -12,6 +12,7 @@ scripts/verify.sh           # everything CI runs: + Testcontainers integration t
 sbt fmt                     # format everything (never hand-format)
 sbt -batch --server "gate/testOnly *GateRoutesSpec"   # one spec
 sbt itTest                  # integration tests only; needs Docker
+LOAD_PROFILE=smoke sbt -batch --server load/run   # Gatling against a running stack (not in the aggregate)
 docker compose up -d --build          # full stack (cp .env.example .env first)
 ```
 
@@ -61,6 +62,10 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   hand. zio-http's server merges the app with `++`, which keeps the *left* not-found handler, so unknown paths get a
   real catch-all route to be traced. Tests use `testkit.TestTelemetry` (`tracing` no-op, `recording` in-memory spans).
   Metric labels must stay low-cardinality.
+- Load test (`load`): Gatling's Java DSL from Scala 3 — `then` needs backticks, import only `Simulation` from
+  `io.gatling.javaapi.core` (its package also has an `exec`), and the forked JVM needs
+  `--add-opens=java.base/java.lang=ALL-UNNAMED`. A probe must not add load that grows with latency (it polls the
+  event by id). The pipe processes partitions in parallel, in order within each; keep it that way.
 - Compose: `--profile stat` replaces `COMPOSE_PROFILES` from `.env` (no broker then); use
   `COMPOSE_PROFILES=kafka,stat docker compose …`.
 - Quill 4.8 pulls zio-json 0.7; it is excluded in both builds because zio-json 1.x is used. Import Quill's
