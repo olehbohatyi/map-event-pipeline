@@ -64,6 +64,30 @@ object PostgresSpec extends ZIOSpecDefault:
         found <- repo.findRecent(2)
       yield assertTrue(found.map(_.id) == List(last.id, mid.id))
     },
+    test("trends are read from a given hour on, for all regions or one") {
+      val rows  =
+        """INSERT INTO map_event_trends (window_start, region, event_type, count) VALUES
+          |  ('2031-02-01T09:00Z', 'Kyiv City', 'Hazard', 5),
+          |  ('2031-02-01T10:00Z', 'Kyiv City', 'Hazard', 2),
+          |  ('2031-02-01T10:00Z', 'Kyiv City', 'Sign', 1),
+          |  ('2031-02-01T10:00Z', 'Lviv Oblast', 'Traffic', 4)""".stripMargin
+      val since = java.time.Instant.parse("2031-02-01T10:00:00Z")
+      for
+        _    <- exec(rows)
+        repo <- ZIO.service[TrendsRepo]
+        all  <- repo.findSince(since, None)
+        kyiv <- repo.findSince(since, Some("Kyiv City"))
+      yield assertTrue(
+        all.map(t => (t.region, t.eventType, t.count)) ==
+          List(
+            ("Kyiv City", EventType.Hazard, 2L),
+            ("Kyiv City", EventType.Sign, 1L),
+            ("Lviv Oblast", EventType.Traffic, 4L),
+          ),
+        kyiv.map(_.count) == List(2L, 1L),
+        all.forall(_.windowStart == since),
+      )
+    },
     test("stats are read per region from map_event_stats") {
       for
         _      <- exec(
@@ -79,4 +103,4 @@ object PostgresSpec extends ZIOSpecDefault:
       )
     },
   ) @@ TestAspect.beforeAll(Migrations.run.orDie) @@ TestAspect.sequential @@ TestAspect.withLiveClock)
-    .provideShared(Containers.postgres, DataSourceLayer.live, EventRepo.live, StatsRepo.live)
+    .provideShared(Containers.postgres, DataSourceLayer.live, EventRepo.live, StatsRepo.live, TrendsRepo.live)
