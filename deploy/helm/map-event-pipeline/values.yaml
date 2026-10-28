@@ -23,6 +23,8 @@ postgres:
   user: mep
   # The password comes from a Secret: set `password`, or name an existing Secret with a POSTGRES_PASSWORD key
   password: ""
+  # The pods restart on chart-managed config changes (checksum annotation); after rotating an existing Secret, run
+  # `kubectl rollout restart deploy/<release>-gate deploy/<release>-pipe`
   existingSecret: ""
   # Used when infra.enabled is false
   url: ""

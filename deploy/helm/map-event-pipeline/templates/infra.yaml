@@ -7,7 +7,7 @@
   (dict "name" "redis" "image" .Values.infra.redisImage "port" 6379 "path" "/data"
         "probe" (list "redis-cli" "ping"))
   (dict "name" "kafka" "image" .Values.infra.kafkaImage "port" 9092 "path" "/var/lib/kafka/data"
-        "probe" (list "/opt/kafka/bin/kafka-topics.sh" "--bootstrap-server" "localhost:9092" "--list"))
+        "probe" list)
 }}
 {{- range $s := $services }}
 ---
@@ -24,11 +24,21 @@ spec:
     metadata:
       labels: {app.kubernetes.io/name: {{ $s.name }}, app.kubernetes.io/instance: {{ $.Release.Name }}}
     spec:
+      {{- if eq $s.name "kafka" }}
+      # The image runs as uid 1000; lets it write to its volume on storage that mounts root-owned
+      securityContext: {fsGroup: 1000}
+      {{- end }}
       containers:
         - name: {{ $s.name }}
           image: {{ $s.image }}
           ports: [{containerPort: {{ $s.port }}}]
+          {{- if $s.probe }}
           readinessProbe: {exec: {command: {{ toJson $s.probe }}}, periodSeconds: 5, timeoutSeconds: 10}
+          {{- else }}
+          # Not an admin-client probe: that client would follow the advertised address, this pod's Service, which only
+          # routes to ready pods — the pod could never become ready. The apps' TopicBootstrap retries until it answers.
+          readinessProbe: {tcpSocket: {port: {{ $s.port }}}, periodSeconds: 5}
+          {{- end }}
           volumeMounts: [{name: data, mountPath: {{ $s.path }}}]
           {{- if eq $s.name "postgres" }}
           env:
