@@ -1,0 +1,6 @@
+apiVersion: v2
+name: map-event-pipeline
+description: Road-event pipeline — gate (HTTP API) and pipe (Kafka processor), optionally with Postgres/PostGIS, Redis and Kafka for development
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

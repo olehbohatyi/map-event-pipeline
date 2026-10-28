@@ -1,0 +1,69 @@
+{{- if .Values.infra.enabled }}
+{{- $n := include "mep.fullname" . -}}
+{{- /* name, image, port, env, readiness command, data path */ -}}
+{{- $services := list
+  (dict "name" "postgres" "image" .Values.infra.postgresImage "port" 5432 "path" "/var/lib/postgresql"
+        "probe" (list "pg_isready" "-U" .Values.postgres.user "-d" .Values.postgres.db))
+  (dict "name" "redis" "image" .Values.infra.redisImage "port" 6379 "path" "/data"
+        "probe" (list "redis-cli" "ping"))
+  (dict "name" "kafka" "image" .Values.infra.kafkaImage "port" 9092 "path" "/var/lib/kafka/data"
+        "probe" (list "/opt/kafka/bin/kafka-topics.sh" "--bootstrap-server" "localhost:9092" "--list"))
+}}
+{{- range $s := $services }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $n }}-{{ $s.name }}
+  labels: {{- include "mep.labels" $ | nindent 4 }}
+spec:
+  serviceName: {{ $n }}-{{ $s.name }}
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: {{ $s.name }}, app.kubernetes.io/instance: {{ $.Release.Name }}}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: {{ $s.name }}, app.kubernetes.io/instance: {{ $.Release.Name }}}
+    spec:
+      containers:
+        - name: {{ $s.name }}
+          image: {{ $s.image }}
+          ports: [{containerPort: {{ $s.port }}}]
+          readinessProbe: {exec: {command: {{ toJson $s.probe }}}, periodSeconds: 5, timeoutSeconds: 10}
+          volumeMounts: [{name: data, mountPath: {{ $s.path }}}]
+          {{- if eq $s.name "postgres" }}
+          env:
+            - {name: POSTGRES_DB, value: {{ $.Values.postgres.db | quote }}}
+            - {name: POSTGRES_USER, value: {{ $.Values.postgres.user | quote }}}
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" $ }}, key: POSTGRES_PASSWORD}}}
+          {{- else if eq $s.name "kafka" }}
+          # KRaft, one node, auto-create off as in compose: the apps' TopicBootstrap creates the topics
+          env:
+            - {name: KAFKA_NODE_ID, value: "1"}
+            - {name: KAFKA_PROCESS_ROLES, value: "broker,controller"}
+            - {name: KAFKA_LISTENERS, value: "INTERNAL://:9092,CONTROLLER://:9093"}
+            - {name: KAFKA_ADVERTISED_LISTENERS, value: "INTERNAL://{{ $n }}-kafka:9092"}
+            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"}
+            - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: INTERNAL}
+            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
+            - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093"}
+            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1"}
+            - {name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: "false"}
+            - {name: KAFKA_LOG_DIRS, value: /var/lib/kafka/data}
+            - {name: CLUSTER_ID, value: MkU3OEVBNTcwNTJENDM2Qg}
+          {{- end }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: {{ $.Values.infra.storage }}}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $n }}-{{ $s.name }}
+  labels: {{- include "mep.labels" $ | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: {{ $s.name }}, app.kubernetes.io/instance: {{ $.Release.Name }}}
+  ports: [{port: {{ $s.port }}}]
+{{- end }}
+{{- end }}

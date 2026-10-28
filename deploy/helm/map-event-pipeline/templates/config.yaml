@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mep.fullname" . }}-env
+  labels: {{- include "mep.labels" . | nindent 4 }}
+data:
+  POSTGRES_URL: {{ include "mep.postgresUrl" . | quote }}
+  POSTGRES_USER: {{ .Values.postgres.user | quote }}
+  REDIS_HOST: {{ include "mep.redisHost" . | quote }}
+  REDIS_PORT: {{ .Values.redis.port | quote }}
+  KAFKA_BOOTSTRAP_SERVERS: {{ include "mep.kafkaServers" . | quote }}
+  GATE_HOST: "0.0.0.0"
+  GATE_PORT: {{ .Values.gate.port | quote }}
+  {{- if .Values.lgtm.enabled }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://{{ include "mep.fullname" . }}-lgtm:4318"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  {{- else }}
+  OTEL_SDK_DISABLED: "true"
+  {{- end }}
+{{- if not .Values.postgres.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "mep.secretName" . }}
+  labels: {{- include "mep.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ required "set postgres.password or postgres.existingSecret" .Values.postgres.password | quote }}
+{{- end }}

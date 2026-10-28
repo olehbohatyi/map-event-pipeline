@@ -1,0 +1,58 @@
+{{- $env := include "mep.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $env }}-gate
+  labels: {{- include "mep.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gate.replicas }}
+  selector: {matchLabels: {app.kubernetes.io/name: gate, app.kubernetes.io/instance: {{ .Release.Name }}}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: gate, app.kubernetes.io/instance: {{ .Release.Name }}}
+      # Restart on configuration changes
+      annotations: {checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}}
+    spec:
+      {{- include "mep.waitForDeps" . | nindent 6 }}
+      containers:
+        - name: gate
+          image: {{ .Values.gate.image }}
+          imagePullPolicy: {{ .Values.gate.pullPolicy }}
+          envFrom: [{configMapRef: {name: {{ $env }}-env}}]
+          env: [{name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" . }}, key: POSTGRES_PASSWORD}}}]
+          ports: [{name: http, containerPort: {{ .Values.gate.port }}}]
+          readinessProbe: {httpGet: {path: /api/v1/health, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /api/v1/health, port: http}, initialDelaySeconds: 60, periodSeconds: 15}
+          resources: {{- toYaml .Values.gate.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $env }}-gate
+  labels: {{- include "mep.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: gate, app.kubernetes.io/instance: {{ .Release.Name }}}
+  ports: [{name: http, port: {{ .Values.gate.port }}, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $env }}-pipe
+  labels: {{- include "mep.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.pipe.replicas }}
+  selector: {matchLabels: {app.kubernetes.io/name: pipe, app.kubernetes.io/instance: {{ .Release.Name }}}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: pipe, app.kubernetes.io/instance: {{ .Release.Name }}}
+      annotations: {checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}}
+    spec:
+      {{- include "mep.waitForDeps" . | nindent 6 }}
+      containers:
+        # No HTTP port: a stuck consumer shows as Kafka lag (and in Grafana), not as a failed probe
+        - name: pipe
+          image: {{ .Values.pipe.image }}
+          imagePullPolicy: {{ .Values.pipe.pullPolicy }}
+          envFrom: [{configMapRef: {name: {{ $env }}-env}}]
+          env: [{name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" . }}, key: POSTGRES_PASSWORD}}}]
+          resources: {{- toYaml .Values.pipe.resources | nindent 12 }}
