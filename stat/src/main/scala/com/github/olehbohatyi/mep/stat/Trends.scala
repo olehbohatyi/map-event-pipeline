@@ -4,7 +4,7 @@ import java.sql.DriverManager
 
 import org.apache.spark.sql.{ DataFrame, Row }
 import org.apache.spark.sql.functions.*
-import org.apache.spark.sql.streaming.{ OutputMode, StreamingQuery, Trigger }
+import org.apache.spark.sql.streaming.{ OutputMode, StreamingQuery, StreamingQueryProgress, Trigger }
 import org.apache.spark.sql.types.*
 import scala.util.Using
 
@@ -61,13 +61,20 @@ object Trends:
       .foreachBatch((batch: DataFrame, batchId: Long) => sink(batch, batchId))
       .start()
 
+  // Rows the stateful operators discarded as late in one micro-batch. Spark drops them without a log line and only
+  // reports the number in the batch's progress, so the job logs it from there.
+  def droppedLate(progress: StreamingQueryProgress): Long =
+    progress.stateOperators.map(_.numRowsDroppedByWatermark).sum
+
   // window_start goes into a timestamptz column, so the JDBC driver keeps the instant whatever the JVM's time zone
   def upsert(db: StatConfig)(batch: DataFrame): Int =
     val rows: Array[Row] = batch.collect()
     if rows.isEmpty then 0
     else
       Using.resource(DriverManager.getConnection(db.jdbcUrl, db.jdbcUser, db.jdbcPassword)) { conn =>
-        Using.resource(
+        // One transaction per batch, so readers never see some of a batch's windows updated and others not
+        conn.setAutoCommit(false)
+        val written = Using.resource(
           conn.prepareStatement(
             """INSERT INTO map_event_trends (window_start, region, event_type, count, updated_at)
               |VALUES (?, ?, ?, ?, NOW())
@@ -84,4 +91,6 @@ object Trends:
           }
           st.executeBatch().length
         }
+        conn.commit()
+        written
       }
