@@ -1,5 +1,7 @@
 # map-event-pipeline
 
+[![CI](https://github.com/olehbohatyi/map-event-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/olehbohatyi/map-event-pipeline/actions/workflows/ci.yml)
+
 A demo event pipeline for road sensor events, built with **Scala 3**, **ZIO 2**, **Kafka / Redpanda**,
 **PostgreSQL/PostGIS**, **Redis**, **Apache Spark** and **OpenTelemetry**.
 
@@ -7,6 +9,29 @@ Clients post events to an HTTP gateway, a stream processor deduplicates, enriche
 and Spark jobs aggregate per-region statistics that the gateway serves back: a batch job for the totals and a
 Structured Streaming job for hourly counts, kept current from Kafka. Traces, metrics and logs from the gateway and the
 processor go to Grafana over OpenTelemetry; one trace follows an event from the HTTP request through Kafka to Postgres.
+
+## Highlights
+
+- **Scala 3 + ZIO 2 throughout**: services as layers, typed errors, `ZStream` processing, fiber-aware tracing,
+  compiled with `-Werror -Wunused:all`.
+- **Kafka with explicit delivery semantics**: idempotent ingest, offsets committed after handling, a dead-letter
+  topic, partitions processed in parallel and in order ([delivery guarantees](#delivery-guarantees)).
+- **PostGIS**: oblast polygons and great-circle queries behind Quill ([regions](#regions-and-geo-queries)).
+- **Spark 4**: a batch job and a Structured Streaming job on Kafka with watermarks, de-duplication and idempotent
+  upserts ([hourly trends](#hourly-trends-spark-structured-streaming)).
+- **Live map**: server-sent events from Kafka to a Leaflet page ([live map](#live-map)).
+- **OpenAPI** generated from the same zio-http endpoints that serve the API, guarded by a golden-file test.
+- **Observability**: one OpenTelemetry trace from the HTTP request through Kafka to Postgres, metrics and trace-linked
+  logs in Grafana ([observability](#observability-opentelemetry)).
+- **Measured, not guessed**: a Gatling load test found the pipe's bottleneck; the fix took baseline p95 from 12.2 s to
+  335 ms ([load testing](#load-testing-gatling)).
+- **Deployable**: Docker images, Compose, and a Helm chart that CI installs on kind and smoke-tests.
+- **Built with Claude Code**, phase by phase, each starting with a spike — see [docs/decisions.md](docs/decisions.md)
+  for what the spikes found.
+
+**Contents:** [Architecture](#architecture) · [Tech stack](#tech-stack) · [Quick start](#quick-start) ·
+[API](#api) · [Build and test](#build-and-test) · [Built with Claude Code](#built-with-claude-code) ·
+[Project layout](#project-layout) · [Decisions](docs/decisions.md)
 
 ## Architecture
 
@@ -23,9 +48,11 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
    │    └─────────────────────────┼──────────── map_events        │ map_event_stats
    │                              │                               │
    └── Redis: idempotency keys    └── Redis: dedup, region cache, ┌──────────┐
-              region cache                   escalation counters  │   stat   │
-                                                                  │  Spark   │
-                                                                  └──────────┘
+              region cache                   escalation counters  │   stat   │ batch: map_event_stats
+                                                                  │  Spark   │ streaming: map.events.enriched
+                                                                  └──────────┘   → map_event_trends (hourly)
+
+ gate, pipe ──OTLP──▶ otel-lgtm (traces, metrics, logs) ──▶ Grafana :3000
 ```
 
 | Module | Role |
@@ -371,6 +398,7 @@ How the work is organised:
 ├── Dockerfile                build stage + gate / pipe / stat targets
 ├── docker-compose.yml        infrastructure, apps, `stat` profile (batch `stat`, streaming `trends`)
 ├── deploy/helm/              Helm chart (gate, pipe, optional in-cluster infra and otel-lgtm)
+├── docs/decisions.md         what each phase's spike found, and the decisions that followed
 ├── observability/            Grafana dashboard and its provisioning (mounted into otel-lgtm)
 ├── scripts/verify.sh         the checks CI runs
 ├── scripts/regions/          buildSeed.sc: regenerates the region polygons from Natural Earth
