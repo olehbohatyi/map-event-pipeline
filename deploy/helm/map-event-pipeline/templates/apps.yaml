@@ -19,7 +19,9 @@ spec:
           image: {{ .Values.gate.image }}
           imagePullPolicy: {{ .Values.gate.pullPolicy }}
           envFrom: [{configMapRef: {name: {{ $env }}-env}}]
-          env: [{name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" . }}, key: POSTGRES_PASSWORD}}}]
+          env:
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" . }}, key: POSTGRES_PASSWORD}}}
+            - {name: JAVA_OPTS, value: {{ .Values.gate.javaOpts | quote }}}
           ports: [{name: http, containerPort: {{ .Values.gate.port }}}]
           readinessProbe: {httpGet: {path: /api/v1/health, port: http}, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /api/v1/health, port: http}, initialDelaySeconds: 60, periodSeconds: 15}
@@ -54,5 +56,7 @@ spec:
           image: {{ .Values.pipe.image }}
           imagePullPolicy: {{ .Values.pipe.pullPolicy }}
           envFrom: [{configMapRef: {name: {{ $env }}-env}}]
-          env: [{name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" . }}, key: POSTGRES_PASSWORD}}}]
+          env:
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" . }}, key: POSTGRES_PASSWORD}}}
+            - {name: JAVA_OPTS, value: {{ .Values.pipe.javaOpts | quote }}}
           resources: {{- toYaml .Values.pipe.resources | nindent 12 }}
