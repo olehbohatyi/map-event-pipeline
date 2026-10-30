@@ -182,10 +182,14 @@ services:
         condition: service_healthy
     ports:
       - "${GATE_PORT}:8080"
+    # Without a limit the JVM sizes its heap from the whole Docker VM, which on a small VM ends up swapped out.
+    # Same limits as the Helm chart; the heap takes 70% of the container instead of the JVM's default 25%
+    mem_limit: 768m
     environment:
       <<: *app-env
       GATE_HOST: 0.0.0.0
       GATE_PORT: "8080"
+      JAVA_OPTS: -XX:MaxRAMPercentage=70
 
   pipe:
     build:
@@ -200,7 +204,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    mem_limit: 512m
     environment:
+      JAVA_OPTS: -XX:MaxRAMPercentage=70
       <<: *app-env
 
   # Streaming job: keeps map_event_trends (hourly counts per region and type) up to date from map.events.enriched.
