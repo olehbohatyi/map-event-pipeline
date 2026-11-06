@@ -6,6 +6,8 @@ import zio.metrics.{ Metric, MetricLabel }
 import zio.telemetry.opentelemetry.tracing.Tracing
 import zio.test.*
 
+import java.util.UUID
+
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.{ SpanKind, StatusCode }
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
@@ -53,6 +55,18 @@ object GateTelemetrySpec extends ZIOSpecDefault:
       .value
       .map(_.count.toLong)
 
+  // What the request metric has seen so far in this JVM, from any spec
+  private def labels(name: String): UIO[Set[String]] =
+    ZIO
+      .metrics
+      .map(_.metrics.filter(_.metricKey.name == "mep_http_server_requests").flatMap(_.metricKey.tags))
+      .map(_.filter(_.key == name).map(_.value))
+
+  private def get(path: String): ZIO[Tracing, Nothing, Response] =
+    run(Request.get(URL.decode(path).toOption.get))
+
+  private val eventRoute = "/api/v1/events/{id}"
+
   def spec = suite("Gate telemetry")(
     test("a request continues the caller's trace in a server span that records the status") {
       for
@@ -91,5 +105,54 @@ object GateTelemetrySpec extends ZIOSpecDefault:
         health1 <- requests(Method.GET, "/api/v1/health", 200)
         other1  <- requests(Method.DELETE, "unmatched", 404)
       yield assertTrue(health1 - health0 >= 1L, other1 - other0 == 2L)
+    },
+    // Regression: a stored event was labelled by its own path (a series per id), a missing one as an unmatched path.
+    // GateRoutesSpec calls this route too, so these counts are lower bounds; the next test rules out concrete paths
+    test("a route is labelled by its template, whatever the id and the status") {
+      for
+        _        <- ZIO.serviceWith[InMemorySpanExporter](_.reset())
+        stored0  <- requests(Method.GET, eventRoute, 200)
+        missing0 <- requests(Method.GET, eventRoute, 404)
+        stored   <- get(s"/api/v1/events/${GateRoutesSpec.fixedId}")
+        missing  <- get(s"/api/v1/events/${UUID.randomUUID()}")
+        stored1  <- requests(Method.GET, eventRoute, 200)
+        missing1 <- requests(Method.GET, eventRoute, 404)
+        spans    <- serverSpans
+      yield assertTrue(
+        stored.status == Status.Ok,
+        missing.status == Status.NotFound,
+        stored1 - stored0 >= 1L,
+        missing1 - missing0 >= 1L,
+        spans.map(_.getAttributes.get(AttributeKey.stringKey("http.route"))) == List(eventRoute, eventRoute),
+      )
+    },
+    // Every spec's requests count here, so this holds exactly. Non-standard methods match no route (Method.ANY covers the
+    // standard ones), so they never reach the metric and cannot grow the method label.
+    test("the route and method labels are a fixed set, whatever clients send") {
+      // Update this when adding a route
+      val routes = Set(
+        "/api/v1/health",
+        "/api/v1/events",
+        "/api/v1/events/nearby",
+        eventRoute,
+        "/api/v1/events/recent",
+        "/api/v1/events/live",
+        "/api/v1/stats",
+        "/api/v1/stats/hourly",
+        "/docs/openapi",
+        "/docs/openapi/Map+Event+Pipeline+API.json",
+        "/map",
+        "unmatched",
+      )
+      for
+        _       <-
+          ZIO.foreachDiscard(routes.filterNot(_ == "unmatched"))(p => get(p.replace("{id}", UUID.randomUUID.toString)))
+        _       <- run(post("labels"))
+        _       <- get("/api/v1/events/not-a-uuid")
+        _       <- run(Request(method = Method.CUSTOM("BREW"), url = URL(Path.decode("/api/v1/health"))))
+        _       <- run(Request(method = Method.CUSTOM("BREW"), url = URL(Path.decode("/coffee"))))
+        seen    <- labels("route")
+        methods <- labels("method")
+      yield assertTrue(seen == routes, !methods("BREW"))
     },
   ).provide(TestTelemetry.recording) @@ TestAspect.sequential

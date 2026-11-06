@@ -16,7 +16,7 @@ import com.github.olehbohatyi.mep.testkit.{ Samples, TestTelemetry }
 
 object GateRoutesSpec extends ZIOSpecDefault:
 
-  private val fixedId = UUID.fromString("00000000-0000-0000-0000-000000000001")
+  val fixedId = UUID.fromString("00000000-0000-0000-0000-000000000001")
 
   object StubIngestion extends IngestionService:
     def ingest(request: EventRequest, idempotencyKey: Option[String]): Task[IngestionResult] =
