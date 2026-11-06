@@ -191,8 +191,8 @@ processing rates, dead letters, live subscribers, recent traces, logs).
   across both services; `PipelineSpec` checks this against real Kafka.
 - **Metrics.** Plain ZIO metrics (`mep_http_server_*`, `mep_events_ingested`, `mep_events_processed`,
   `mep_records_dead_lettered`, `mep_event_processing_duration_ms`, `mep_live_subscribers`), plus ZIO's runtime and
-  zio-kafka's own metrics, exported through zio-opentelemetry's bridge. Unknown paths are counted as `unmatched`, so a
-  scanner cannot create unbounded labels.
+  zio-kafka's own metrics, exported through zio-opentelemetry's bridge. Requests are labelled by route template
+  (`/api/v1/events/{id}`) and unknown paths as `unmatched`, so neither ids nor a scanner can create unbounded labels.
 - **Logs.** ZIO logs go to Loki with the `trace_id` and `span_id` of the fiber that wrote them (Grafana links log lines
   and traces both ways); the console output stays as it was.
 - **No Java agent.** A spike with the OpenTelemetry agent on JDK 27 lost the caller's trace at the HTTP boundary: the

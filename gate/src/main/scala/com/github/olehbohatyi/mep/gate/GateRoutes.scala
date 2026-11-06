@@ -37,20 +37,21 @@ object GateRoutes:
   private val MaxHours      = 168
 
   def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed, tracing: Tracing): Routes[Any, Nothing] =
-    observed(tracing)(
+    val known =
       api(ingestion, query, feed) ++
         SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
-        Routes(Method.GET / "map" -> mapPage) ++
-        // Unknown paths answer 404 from a real route, so they are traced and counted too: zio-http's server merges the
-        // app into its own (`++` keeps the left side's not-found handler), so a wrapped not-found handler is lost
-        Routes(Method.ANY / trailing -> Handler.notFound)
-    )
+        Routes(Method.GET / "map" -> mapPage)
+    Routes.fromIterable(known.routes.map(route => observed(tracing, route.routePattern.pathCodec.render)(route))) ++
+      // Unknown paths answer 404 from a real route, so they are traced and counted too: zio-http's server merges the
+      // app into its own (`++` keeps the left side's not-found handler), so a wrapped not-found handler is lost
+      Routes(observed(tracing, "unmatched")(Method.ANY / trailing -> Handler.notFound))
 
   /** A server span per request that continues the caller's `traceparent` (the producer span and the pipe's spans then
-    * join the same trace), plus request count and latency. For the live stream both cover the response head only.
+    * join the same trace), plus request count and latency labelled `routeLabel`. For the live stream both cover the
+    * response head only.
     */
-  private def observed(tracing: Tracing)(routes: Routes[Any, Nothing]): Routes[Any, Nothing] =
-    routes.transform { handle =>
+  private def observed(tracing: Tracing, routeLabel: String)(route: Route[Any, Nothing]): Route[Any, Nothing] =
+    route.transform { handle =>
       // The request's own scope, which zio-http opens per request and closes after the response (body included)
       Handler.scoped[Any](Handler.fromFunctionZIO[Request] { req =>
         val path    = req.path.encode
@@ -64,10 +65,9 @@ object GateRoutes:
           Attributes(Attribute.string("http.request.method", req.method.toString), Attribute.string("url.path", path)),
         ) {
           handle(req).merge.timed.flatMap { (took, res) =>
-            val route = if res.status == Status.NotFound then "unmatched" else path
             tracing.setAttribute("http.response.status_code", res.status.code.toLong) *>
               tracing.getCurrentSpanUnsafe.map(_.setStatus(StatusCode.ERROR)).when(res.status.isServerError) *>
-              GateMetrics.request(req.method.toString, route, res.status.code, took).as(res)
+              GateMetrics.request(req.method.toString, routeLabel, res.status.code, took).as(res)
           }
         }
       })

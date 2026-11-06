@@ -14,7 +14,8 @@ object GateMetrics:
   // Connected live map clients
   val liveSubscribers: Metric.Gauge[Double] = Metric.gauge("mep_live_subscribers")
 
-  // `route` must stay a small set of values: unmatched paths are labelled as such, not by what a client sent
+  // `route` must stay a small set of values: a route's template, never the path a client sent, and `unmatched` for
+  // paths no route matches
   def request(method: String, route: String, status: Int, took: Duration): UIO[Unit] =
     val labels = Set(MetricLabel("method", method), MetricLabel("route", route), MetricLabel("status", status.toString))
     requests.tagged(labels).increment *> duration.tagged(labels).update(took.toNanos / 1e6)
