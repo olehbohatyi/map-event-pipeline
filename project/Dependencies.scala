@@ -17,10 +17,10 @@ object Versions {
   val quill      = "4.8.6"
   val postgres   = "42.7.14"
   val hikari     = "7.1.0"
-  val flyway     = "13.11.1"
+  val flyway     = "13.12.0"
   val logback    = "1.6.6"
   val chimney    = "2.1.0"
-  val spark      = "4.2.0"
+  val spark      = "4.2.1"
   val testcont   = "2.0.5"
   val gatling    = "3.16.0"
 }

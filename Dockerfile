@@ -51,7 +51,7 @@ USER mep
 ENTRYPOINT ["bin/pipe"]
 
 # ── stat: Spark batch and streaming jobs (Spark 4.x runs on Java 21) ─────────
-FROM apache/spark:4.2.0-scala2.13-java21-ubuntu AS stat
+FROM apache/spark:4.2.1-scala2.13-java21-ubuntu AS stat
 COPY --from=build /out/stat.jar /opt/mep/stat.jar
 # The streaming job's checkpoint. Created here, owned by the image's `spark` user, so that a new named volume mounted
 # on it inherits that owner and the job can write to it

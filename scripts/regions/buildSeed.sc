@@ -1,5 +1,5 @@
 //> using scala 3.10.0
-//> using dep com.lihaoyi::os-lib:0.11.9
+//> using dep com.lihaoyi::os-lib:0.11.10
 //> using dep com.lihaoyi::ujson:4.4.3
 
 // Generates core/src/main/resources/db/migration/V3__regions_ukraine.sql from Natural Earth.

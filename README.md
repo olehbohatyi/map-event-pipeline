@@ -132,7 +132,7 @@ coordinates, e.g. `Kyiv City`, `Lviv Oblast`, `Autonomous Republic of Crimea`.
 | Chimney | 2.1.0 |
 | zio-opentelemetry · OpenTelemetry SDK | 3.1.21 · 1.67.0 |
 | grafana/otel-lgtm (collector, Tempo, Prometheus, Loki, Grafana) | 0.38.1, pinned by digest |
-| Spark | 4.2.0 |
+| Spark | 4.2.1 |
 | Testcontainers | 2.0.5 |
 | PostgreSQL + PostGIS · Redis | 18.6 + 3.6.4 (`postgis/postgis:18-3.6-alpine`, pinned by digest) · 8.6.3 |
 | Apache Kafka (KRaft) · Redpanda | 4.3.0 · v26.1.9 |
