@@ -126,6 +126,20 @@ object GateTelemetrySpec extends ZIOSpecDefault:
         spans.map(_.getAttributes.get(AttributeKey.stringKey("http.route"))) == List(eventRoute, eventRoute),
       )
     },
+    // Regression: spans were named by the concrete path, so a name per event id; the path stays as an attribute
+    test("spans are named by route template, unknown paths by one name") {
+      val id = UUID.randomUUID()
+      for
+        _     <- ZIO.serviceWith[InMemorySpanExporter](_.reset())
+        _     <- get(s"/api/v1/events/$id")
+        _     <- get("/wp-login.php")
+        spans <- serverSpans
+      yield assertTrue(
+        spans.map(_.getName) == List(s"GET $eventRoute", "GET unmatched"),
+        spans.map(_.getAttributes.get(AttributeKey.stringKey("url.path"))) ==
+          List(s"/api/v1/events/$id", "/wp-login.php"),
+      )
+    },
     // Every spec's requests count here, so this holds exactly. Non-standard methods match no route (Method.ANY covers the
     // standard ones), so they never reach the metric and cannot grow the method label.
     test("the route and method labels are a fixed set, whatever clients send") {
