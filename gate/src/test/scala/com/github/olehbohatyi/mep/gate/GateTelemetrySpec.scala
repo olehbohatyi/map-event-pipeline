@@ -110,22 +110,26 @@ object GateTelemetrySpec extends ZIOSpecDefault:
     // GateRoutesSpec calls this route too, so these counts are lower bounds; the next test rules out concrete paths
     test("a route is labelled by its template, whatever the id and the status") {
       for
+        _        <- ZIO.serviceWith[InMemorySpanExporter](_.reset())
         stored0  <- requests(Method.GET, eventRoute, 200)
         missing0 <- requests(Method.GET, eventRoute, 404)
         stored   <- get(s"/api/v1/events/${GateRoutesSpec.fixedId}")
         missing  <- get(s"/api/v1/events/${UUID.randomUUID()}")
         stored1  <- requests(Method.GET, eventRoute, 200)
         missing1 <- requests(Method.GET, eventRoute, 404)
+        spans    <- serverSpans
       yield assertTrue(
         stored.status == Status.Ok,
         missing.status == Status.NotFound,
         stored1 - stored0 >= 1L,
         missing1 - missing0 >= 1L,
+        spans.map(_.getAttributes.get(AttributeKey.stringKey("http.route"))) == List(eventRoute, eventRoute),
       )
     },
     // Every spec's requests count here, so this holds exactly. Non-standard methods match no route (Method.ANY covers the
     // standard ones), so they never reach the metric and cannot grow the method label.
     test("the route and method labels are a fixed set, whatever clients send") {
+      // Update this when adding a route
       val routes = Set(
         "/api/v1/health",
         "/api/v1/events",

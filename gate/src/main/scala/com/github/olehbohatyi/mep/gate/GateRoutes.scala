@@ -62,7 +62,11 @@ object GateRoutes:
           IncomingContextCarrier.default(headers),
           s"${req.method} $path",
           SpanKind.SERVER,
-          Attributes(Attribute.string("http.request.method", req.method.toString), Attribute.string("url.path", path)),
+          Attributes(
+            Attribute.string("http.request.method", req.method.toString),
+            Attribute.string("url.path", path),
+            Attribute.string("http.route", routeLabel),
+          ),
         ) {
           handle(req).merge.timed.flatMap { (took, res) =>
             tracing.setAttribute("http.response.status_code", res.status.code.toLong) *>
