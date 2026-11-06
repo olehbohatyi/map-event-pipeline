@@ -44,10 +44,12 @@ object GateTelemetrySpec extends ZIOSpecDefault:
   private def serverSpans: URIO[InMemorySpanExporter, List[SpanData]] =
     ZIO.serviceWith[InMemorySpanExporter](_.getFinishedSpanItems.asScala.toList.filter(_.getKind == SpanKind.SERVER))
 
-  private def requests(route: String, status: Int): UIO[Long] =
+  private def requests(method: Method, route: String, status: Int): UIO[Long] =
     Metric
       .counter("mep_http_server_requests")
-      .tagged(Set(MetricLabel("method", "GET"), MetricLabel("route", route), MetricLabel("status", status.toString)))
+      .tagged(
+        Set(MetricLabel("method", method.toString), MetricLabel("route", route), MetricLabel("status", status.toString))
+      )
       .value
       .map(_.count.toLong)
 
@@ -77,15 +79,17 @@ object GateTelemetrySpec extends ZIOSpecDefault:
       )
     },
     // Regression: on the server, unknown paths were neither traced nor counted (the wrapped not-found handler was lost)
+    // Metrics are global and other specs run in parallel: DELETE is used by no other spec, so its count is exact, and
+    // GateRoutesSpec also calls health
     test("requests are counted by route and status; unknown paths share one label") {
       for
-        health0 <- requests("/api/v1/health", 200)
-        other0  <- requests("unmatched", 404)
+        health0 <- requests(Method.GET, "/api/v1/health", 200)
+        other0  <- requests(Method.DELETE, "unmatched", 404)
         _       <- run(Request.get(URL(Path.decode("/api/v1/health"))))
-        _       <- run(Request.get(URL(Path.decode("/wp-login.php"))))
-        _       <- run(Request.get(URL(Path.decode("/.env"))))
-        health1 <- requests("/api/v1/health", 200)
-        other1  <- requests("unmatched", 404)
-      yield assertTrue(health1 - health0 == 1L, other1 - other0 == 2L)
+        _       <- run(Request.delete(URL(Path.decode("/wp-login.php"))))
+        _       <- run(Request.delete(URL(Path.decode("/.env"))))
+        health1 <- requests(Method.GET, "/api/v1/health", 200)
+        other1  <- requests(Method.DELETE, "unmatched", 404)
+      yield assertTrue(health1 - health0 >= 1L, other1 - other0 == 2L)
     },
   ).provide(TestTelemetry.recording) @@ TestAspect.sequential
