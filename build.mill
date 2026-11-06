@@ -31,7 +31,7 @@ object V {
 
 // sbt/Maven directory layout (src/main/scala, src/test/scala), shared with the sbt build
 trait MepModule extends SbtModule {
-  def scalaVersion  = V.scala
+  def scalaVersion = V.scala
   def scalacOptions = Seq(
     "-deprecation",
     "-feature",
@@ -39,10 +39,10 @@ trait MepModule extends SbtModule {
     "-Werror",
     "-Wunused:all",
     "-Wvalue-discard",
-    "-Wnonunit-statement",
+    "-Wnonunit-statement"
   )
   // Scala's LazyVals still touches sun.misc.Unsafe; silence the JDK 24+ deprecation banner
-  def forkArgs      = Seq("--sun-misc-unsafe-memory-access=allow")
+  def forkArgs = Seq("--sun-misc-unsafe-memory-access=allow")
 
   trait MepTests extends SbtTests with TestModule.ZioTest {
     def mvnDeps = Seq(mvn"dev.zio::zio-test:${V.zio}", mvn"dev.zio::zio-test-sbt:${V.zio}")
@@ -75,7 +75,7 @@ object core extends MepModule {
     mvn"dev.zio::zio-opentelemetry:${V.zioOtel}",
     mvn"io.opentelemetry:opentelemetry-sdk:${V.otel}",
     mvn"io.opentelemetry:opentelemetry-exporter-otlp:${V.otel}",
-    mvn"io.opentelemetry:opentelemetry-sdk-extension-autoconfigure:${V.otel}",
+    mvn"io.opentelemetry:opentelemetry-sdk-extension-autoconfigure:${V.otel}"
   )
   object test extends MepTests {
     // In-memory exporters, to assert span structure in tests
@@ -103,33 +103,33 @@ object pipe extends MepModule {
 // Spark 4.x links against the Scala 2.13 stdlib and does not run on JDK 24+,
 // so stat stays on Scala 3.7, runs on Java 21 and does not depend on core
 object stat extends MepModule {
-  def scalaVersion                 = V.scalaSpark
-  def jvmId                        = "temurin:21"
-  def scalacOptions                = super.scalacOptions() ++ Seq("-release", "21")
-  def forkArgs                     = Seq(
+  def scalaVersion   = V.scalaSpark
+  def jvmId          = "temurin:21"
+  def scalacOptions  = super.scalacOptions() ++ Seq("-release", "21")
+  def forkArgs       = Seq(
     "--add-opens=java.base/java.lang=ALL-UNNAMED",
     "--add-opens=java.base/java.nio=ALL-UNNAMED",
     "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED"
   )
-  def mainClass                    = Some("com.github.olehbohatyi.mep.stat.StatApp")
-  def compileMvnDeps               = Seq(mvn"org.apache.spark:spark-sql_2.13:${V.spark}")
+  def mainClass      = Some("com.github.olehbohatyi.mep.stat.StatApp")
+  def compileMvnDeps = Seq(mvn"org.apache.spark:spark-sql_2.13:${V.spark}")
   // The Kafka source is not in the apache/spark image, so it goes into the jar, without what the image already ships
-  def mvnDeps                      = Seq(
+  def mvnDeps        = Seq(
     mvn"org.postgresql:postgresql:${V.postgres}",
     mvn"org.apache.spark:spark-sql-kafka-0-10_2.13:${V.spark}".exclude(
-      "org.apache.hadoop"        -> "*",
-      "at.yawk.lz4"              -> "*",
-      "org.xerial.snappy"        -> "*",
-      "org.slf4j"                -> "*",
+      "org.apache.hadoop" -> "*",
+      "at.yawk.lz4" -> "*",
+      "org.xerial.snappy" -> "*",
+      "org.slf4j" -> "*",
       "com.google.code.findbugs" -> "*",
-      "org.scala-lang"           -> "*",
-      "org.scala-lang.modules"   -> "*",
-      "org.apache.spark"         -> "spark-tags_2.13",
-    ),
+      "org.scala-lang" -> "*",
+      "org.scala-lang.modules" -> "*",
+      "org.apache.spark" -> "spark-tags_2.13"
+    )
   )
   // A plain jar for spark-submit, without mill's launcher script prepended
-  def prependShellScript           = ""
+  def prependShellScript = ""
   // Spark provides scala-library 2.13; keep only scala3-library in the fat jar
   def upstreamIvyAssemblyClasspath = Task {
     super.upstreamIvyAssemblyClasspath().filterNot(_.path.last.startsWith("scala-library"))
@@ -148,7 +148,7 @@ object it extends MepModule {
     def moduleDeps = super.moduleDeps ++ Seq(core.test)
     def mvnDeps    = super.mvnDeps() ++ Seq(
       mvn"org.testcontainers:testcontainers-postgresql:${V.testcont}",
-      mvn"org.testcontainers:testcontainers-kafka:${V.testcont}",
+      mvn"org.testcontainers:testcontainers-kafka:${V.testcont}"
     )
   }
 }
