@@ -14,11 +14,11 @@
 val NaturalEarthTag = "v5.1.2"
 val NaturalEarthUrl =
   s"https://raw.githubusercontent.com/nvkelso/natural-earth-vector/$NaturalEarthTag/geojson/ne_10m_admin_1_states_provinces.geojson"
-val PostgisImage    = "postgis/postgis:18-3.6-alpine"
-val Container       = "mep-regions-seed"
-val Tolerance       = 0.003 // degrees, ~300 m: simplification strength
-val Decimals        = 5     // coordinate precision of the output, ~1 m
-val Output          = os.pwd / "core" / "src" / "main" / "resources" / "db" / "migration" / "V3__regions_ukraine.sql"
+val PostgisImage = "postgis/postgis:18-3.6-alpine"
+val Container    = "mep-regions-seed"
+val Tolerance    = 0.003 // degrees, ~300 m: simplification strength
+val Decimals     = 5     // coordinate precision of the output, ~1 m
+val Output       = os.pwd / "core" / "src" / "main" / "resources" / "db" / "migration" / "V3__regions_ukraine.sql"
 
 // Curated display names, keyed by ISO 3166-2 code. Natural Earth calls both Kyiv entries "Kyiv" and spells
 // some names differently ("Odessa"), so names are fixed here and only the geometry comes from the dataset.
@@ -58,24 +58,22 @@ def fail(msg: String): Nothing = throw RuntimeException(s"buildSeed: $msg")
 def sh(args: String*): os.CommandResult = os.proc(args).call(check = false, mergeErrIntoOut = true)
 
 // ── 1. Natural Earth → the 27 Ukrainian regions ──────────────────────────────────────────────────────────────
-val workDir  = os.temp.dir(prefix = "mep-regions-")
-val source   = workDir / "admin1.geojson"
+val workDir = os.temp.dir(prefix = "mep-regions-")
+val source  = workDir / "admin1.geojson"
 println(s"Downloading Natural Earth $NaturalEarthTag admin-1 (~40 MB) …")
 val download = sh("curl", "-fsSL", "--max-time", "600", "-o", source.toString, NaturalEarthUrl)
 if download.exitCode != 0 then fail(s"download failed:\n${download.out.text()}")
 
 // Selected by ISO code, not by country: Natural Earth's default data files Crimea (UA-43) and Sevastopol (UA-40)
 // under another country, but they are Ukrainian regions.
-val features =
-  ujson.read(os.read(source))("features").arr.filter(_("properties")("iso_3166_2").strOpt.exists(_.startsWith("UA-")))
+val features = ujson.read(os.read(source))("features").arr.filter(_("properties")("iso_3166_2").strOpt.exists(_.startsWith("UA-")))
 val codes    = features.map(_("properties")("iso_3166_2").str).toSet
 if codes != Names.keySet then fail(s"expected ${Names.keySet.toList.sorted}, found ${codes.toList.sorted}")
 println(s"Selected ${features.size} regions by ISO 3166-2 code")
 
 // ── 2. PostGIS: load, simplify, verify, render INSERTs ───────────────────────────────────────────────────────
 def psql(sql: String): String =
-  val r = os
-    .proc("docker", "exec", "-i", Container, "psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-At", "-q", "-f", "-")
+  val r = os.proc("docker", "exec", "-i", Container, "psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-At", "-q", "-f", "-")
     .call(stdin = sql, check = false, mergeErrIntoOut = true)
   if r.exitCode != 0 then fail(s"psql failed:\n${r.out.text()}")
   r.out.text()
@@ -92,14 +90,9 @@ try
   }
   if !ready then fail("PostGIS did not become ready")
 
-  val load = new StringBuilder(
-    "CREATE EXTENSION IF NOT EXISTS postgis;\nCREATE TABLE names (iso text PRIMARY KEY, name text NOT NULL);\n"
-  )
+  val load = new StringBuilder("CREATE EXTENSION IF NOT EXISTS postgis;\nCREATE TABLE names (iso text PRIMARY KEY, name text NOT NULL);\n")
   load ++= "CREATE TABLE raw (iso text PRIMARY KEY, geom geometry(MultiPolygon, 4326) NOT NULL);\n"
-  Names
-    .toList
-    .sorted
-    .foreach((iso, name) => load ++= s"INSERT INTO names VALUES ('$iso', '${name.replace("'", "''")}');\n")
+  Names.toList.sorted.foreach((iso, name) => load ++= s"INSERT INTO names VALUES ('$iso', '${name.replace("'", "''")}');\n")
   features.foreach { f =>
     val geometry = ujson.write(f("geometry")).replace("'", "''")
     load ++= s"INSERT INTO raw VALUES ('${f("properties")("iso_3166_2").str}', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON('$geometry'), 4326)));\n"
