@@ -46,9 +46,9 @@ object GateRoutes:
       // app into its own (`++` keeps the left side's not-found handler), so a wrapped not-found handler is lost
       Routes(observed(tracing, "unmatched")(Method.ANY / trailing -> Handler.notFound))
 
-  /** A server span per request that continues the caller's `traceparent` (the producer span and the pipe's spans then
-    * join the same trace), plus request count and latency labelled `routeLabel`. For the live stream both cover the
-    * response head only.
+  /** A server span per request, named by `routeLabel` (the concrete path is the `url.path` attribute), that continues
+    * the caller's `traceparent` (the producer span and the pipe's spans then join the same trace), plus request count
+    * and latency labelled `routeLabel`. For the live stream both cover the response head only.
     */
   private def observed(tracing: Tracing, routeLabel: String)(route: Route[Any, Nothing]): Route[Any, Nothing] =
     route.transform { handle =>
@@ -60,7 +60,7 @@ object GateRoutes:
         tracing.extractSpan(
           TraceContextPropagator.default,
           IncomingContextCarrier.default(headers),
-          s"${req.method} $path",
+          s"${req.method} $routeLabel",
           SpanKind.SERVER,
           Attributes(
             Attribute.string("http.request.method", req.method.toString),
