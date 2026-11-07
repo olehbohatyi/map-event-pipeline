@@ -71,8 +71,9 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
   `GATE_RATE_LIMIT_WINDOW_SECONDS`; 0 turns it off). More get `429` with `Retry-After` before the body is read, so
   nothing is published. Fixed windows counted in Redis (`mep:gate:rate:*`) by one Lua script, so a counter always
   expires: with `INCR` and `EXPIRE` sent apart, a gate stopped in between would block that client for good. If Redis
-  fails or takes over 250 ms to answer, the request goes through: a missing limit is better than a gate that accepts nothing. The address is the
-  connection's, so behind a proxy the limit belongs in the proxy. `mep_rate_limit_decisions` counts the outcomes.
+  fails or takes over 250 ms to answer, the request goes through: a missing limit is better than a gate that accepts
+  nothing. The address is the connection's, so behind a proxy the limit belongs in the proxy.
+  `mep_rate_limit_decisions` counts the outcomes.
 - **Pipe.** At-least-once. Offsets are committed only after an event is handled. Transient failures are retried
   with backoff; if they persist, the stream stops without committing, so the record is redelivered after a restart.
   A malformed record is never dropped: it is published as-is to `map.events.dlq` with headers naming the error and
