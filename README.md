@@ -275,7 +275,9 @@ serves it.
   off) instead of failing on every restart, and logs how many records it skipped.
 - Hours the stream could not count in full (records deleted by retention, events dropped as late) are recounted from
   `map_events` by `TrendsBackfillApp`. It writes the same rows the stream does (a test checks both on the same
-  events) and only whole hours that ended an hour or more ago, so it can run while the stream does. Found by running
+  events) and only whole hours that ended an hour or more ago, so it can run while the stream does. A new checkpoint
+  is the exception: the stream then recounts the topic's retained history and writes its first, partial hour over
+  the recount, so run the backfill again after resetting the checkpoint. Found by running
   the job again after ten days off: 23,500 events were missing from the trends.
 - Each batch's counts are written in one transaction, so `/stats/hourly` never shows half a batch.
 - The Kafka source is not part of the `apache/spark` image, so `stat.jar` bundles it, without the jars the image

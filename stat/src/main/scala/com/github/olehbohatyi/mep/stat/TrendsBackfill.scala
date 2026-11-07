@@ -60,7 +60,8 @@ object TrendsBackfill:
   def run(spark: SparkSession, db: StatConfig, range: Range): Int =
     Trends.upsert(db)(recount(readEvents(spark, db, range), range))
 
-  // Only the rows in range leave Postgres; the instants are formatted here, not taken from input as text
+  // Only the rows in range leave Postgres; the instants are formatted here, not taken from input as text. One JDBC
+  // partition: fine for a one-shot job over this table, a much wider range would want `partitionColumn` on created_at
   private def readEvents(spark: SparkSession, db: StatConfig, range: Range): DataFrame =
     val where = (range.from.map(f => s"created_at >= '$f'::timestamptz").toList :+
       s"created_at < '${range.to}'::timestamptz").mkString(" AND ")
