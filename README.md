@@ -165,6 +165,9 @@ docker compose run --rm stat              # aggregate into map_event_stats
 curl 'localhost:8080/api/v1/stats?region=Kyiv%20City'
 
 COMPOSE_PROFILES=kafka,stat docker compose up -d trends   # streaming job: hourly counts
+# recount hourly trends from map_events: every finished hour, or one range (instants or UTC dates)
+COMPOSE_PROFILES=kafka,stat docker compose run --rm stat --class com.github.olehbohatyi.mep.stat.TrendsBackfillApp \
+  /opt/mep/stat.jar --from 2026-10-28 --to 2026-11-01
 curl 'localhost:8080/api/v1/stats/hourly?region=Kyiv%20City&hours=24'
 ```
 
@@ -267,9 +270,13 @@ serves it.
 - Each micro-batch carries the full count of every window it changed (update mode) and is upserted, so a batch that
   Spark replays after a crash writes the same values again. Checked: forcing a replay restored a count edited by hand.
 - The checkpoint (Kafka offsets and de-duplication state) lives in the `trends_checkpoint` volume. A fresh checkpoint
-  starts from the oldest retained record, so the table is backfilled from the topic's retention (7 days) first. If
+  starts from the oldest retained record, so the table is filled from the topic's retention (7 days) first. If
   the job was stopped for longer than the retention, it continues from the oldest record left (`failOnDataLoss`
-  off) instead of failing on every restart; the counts for the expired hours are lost either way.
+  off) instead of failing on every restart, and logs how many records it skipped.
+- Hours the stream could not count in full (records deleted by retention, events dropped as late) are recounted from
+  `map_events` by `TrendsBackfillApp`. It writes the same rows the stream does (a test checks both on the same
+  events) and only whole hours that ended an hour or more ago, so it can run while the stream does. Found by running
+  the job again after ten days off: 23,500 events were missing from the trends.
 - Each batch's counts are written in one transaction, so `/stats/hourly` never shows half a batch.
 - The Kafka source is not part of the `apache/spark` image, so `stat.jar` bundles it, without the jars the image
   already ships (Hadoop client, compression codecs, slf4j, Scala, `spark-tags`).
@@ -415,7 +422,7 @@ How the work is organised:
 │       └── telemetry/        Telemetry: OpenTelemetry SDK, fiber context, logging bridge
 ├── gate/                     GateRoutes, IngestionService, QueryService, GateApp
 ├── pipe/                     StreamProcessor, EventHandler, Dedup/Enrichment/Escalation, PipeApp
-├── stat/                     EventAggregator, StatApp (batch); Trends, TrendsApp (streaming)
+├── stat/                     EventAggregator, StatApp (batch); Trends, TrendsApp (streaming); TrendsBackfill
 ├── load/                     Gatling simulation (Java DSL from Scala 3) and its profiles
 └── it/                       Testcontainers specs
 ```

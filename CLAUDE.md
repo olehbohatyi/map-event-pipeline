@@ -54,7 +54,9 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   (update mode) so replayed batches are harmless; window starts go into `timestamptz` (a plain `timestamp` column
   would shift by the JVM's zone). The Kafka connector is bundled in `stat.jar` minus what the Spark image ships —
   keep the exclusions in both builds in step. Test streaming via `readStream.text` + `foreachBatch` (the memory sink
-  cannot restart from a checkpoint, `MemoryStream` needs encoders); share `TestSpark.layer`, never stop the session.
+  cannot restart from a checkpoint, `MemoryStream` needs encoders); share `TestSpark.layer`, never stop the session. Hours the stream
+  missed are recounted by `TrendsBackfillApp` from `map_events` through `Trends.counts` (the stream's own counting);
+  it only writes whole hours that ended an hour ago, so it never races the stream.
 - Telemetry (`core/telemetry/Telemetry`): no Java agent — trace context lives in a `FiberRef` (zio-telemetry
   `contextZIO`). Apps are `ZIOApp`s whose `bootstrap` builds the SDK, the one context store and the logging bridge;
   build `Telemetry.tracing`/`metrics` on top of that `Env`, never a second `contextZIO` (logs would lose trace ids).
