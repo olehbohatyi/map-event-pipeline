@@ -91,4 +91,15 @@ object RateLimitSpec extends ZIOSpecDefault:
         ingested <- g.ingested.get
       yield assertTrue(res.status == Status.Accepted, ingested == 1)
     },
+    // Regression: only a failed call was let through; a Redis that never answered held every submission
+    test("lets requests through when the limiter does not answer in time") {
+      for
+        g        <- gate(limit = 0)
+        _        <- g.limiter.hang
+        fiber    <- g.post("10.0.0.1").fork
+        _        <- TestClock.adjust(GateRoutes.LimiterTimeout)
+        res      <- fiber.join
+        ingested <- g.ingested.get
+      yield assertTrue(res.status == Status.Accepted, ingested == 1)
+    },
   ).provide(TestTelemetry.tracing)

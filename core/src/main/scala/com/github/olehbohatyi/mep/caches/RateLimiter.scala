@@ -24,8 +24,20 @@ object RateLimiter:
   def apply(redis: Redis, config: RateLimitConfig, namespace: String = Namespace): RateLimiter =
     if config.requests <= 0 then unlimited else RateLimiterLive(redis, config, namespace)
 
-  val live: URLayer[Redis & RateLimitConfig, RateLimiter] =
-    ZLayer.fromFunction((redis: Redis, config: RateLimitConfig) => apply(redis, config))
+  // A window of zero or less would make the script delete each counter at once: no limit, and no sign of it
+  def validate(config: RateLimitConfig): Either[String, RateLimitConfig] =
+    if config.requests > 0 && config.windowSeconds <= 0 then
+      Left(s"rate-limit window-seconds must be positive, got ${config.windowSeconds}")
+    else Right(config)
+
+  val live: ZLayer[Redis & RateLimitConfig, IllegalArgumentException, RateLimiter] =
+    ZLayer.fromZIO(
+      for
+        redis  <- ZIO.service[Redis]
+        config <-
+          ZIO.serviceWithZIO[RateLimitConfig](c => ZIO.fromEither(validate(c)).mapError(IllegalArgumentException(_)))
+      yield apply(redis, config)
+    )
 
   /** Counts and starts the window's expiry in one step: with INCR and EXPIRE sent separately, a gate stopped in between
     * would leave a counter that never expires and a client blocked for good. Returns the count and the milliseconds
