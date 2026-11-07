@@ -2,10 +2,12 @@ package com.github.olehbohatyi.mep.stat
 
 import java.sql.DriverManager
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.spark.sql.{ DataFrame, Row }
 import org.apache.spark.sql.functions.*
 import org.apache.spark.sql.streaming.{ OutputMode, StreamingQuery, StreamingQueryProgress, Trigger }
 import org.apache.spark.sql.types.*
+import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
 // Hourly event counts per region and type, as a stream over what the pipe publishes to map.events.enriched.
@@ -40,9 +42,12 @@ object Trends:
     * publish an event twice after a retry; duplicates are dropped by id while the watermark keeps their state.
     */
   def hourly(events: DataFrame): DataFrame =
+    counts(events.withWatermark("createdAt", Watermark).dropDuplicatesWithinWatermark("id"))
+
+  // The rows of map_event_trends, from events with `eventType`, `region` and `createdAt`. Shared with the backfill,
+  // so both cut hours the same way
+  def counts(events: DataFrame): DataFrame =
     events
-      .withWatermark("createdAt", Watermark)
-      .dropDuplicatesWithinWatermark("id")
       .groupBy(window(col("createdAt"), "1 hour"), col("region"), col("eventType"))
       .count()
       .select(col("window.start").as("window_start"), col("region"), col("eventType").as("event_type"), col("count"))
@@ -65,6 +70,29 @@ object Trends:
   // reports the number in the batch's progress, so the job logs it from there.
   def droppedLate(progress: StreamingQueryProgress): Long =
     progress.stateOperators.map(_.numRowsDroppedByWatermark).sum
+
+  /** Kafka records a micro-batch skipped because the topic's retention deleted them before they were read: the batch
+    * covers offsets `start` to `end` (Spark's JSON, `{"topic":{"partition":offset}}`) but read fewer rows. With
+    * `failOnDataLoss` off Spark goes on from the oldest record left and only logs a warning per partition. A partition
+    * missing from `start` is new and counted from offset 0; the first batch of a new checkpoint has no `start`.
+    */
+  def skippedRecords(start: String, end: String, numInputRows: Long): Long =
+    if start == null || end == null then 0L
+    else
+      val from  = offsets(start)
+      val range = offsets(end).map((partition, to) => math.max(0L, to - from.getOrElse(partition, 0L))).sum
+      math.max(0L, range - numInputRows)
+
+  private def offsets(json: String): Map[(String, String), Long] =
+    val topics = new ObjectMapper().readTree(json)
+    topics
+      .properties()
+      .asScala
+      .toList
+      .flatMap { topic =>
+        topic.getValue.properties().asScala.map(p => (topic.getKey, p.getKey) -> p.getValue.asLong)
+      }
+      .toMap
 
   // window_start goes into a timestamptz column, so the JDBC driver keeps the instant whatever the JVM's time zone
   def upsert(db: StatConfig)(batch: DataFrame): Int =

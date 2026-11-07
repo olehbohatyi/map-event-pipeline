@@ -4,6 +4,8 @@
 #   docker compose up -d --build      # postgres, redis, broker, gate, pipe, lgtm (Grafana on :3000)
 #   docker compose run --rm stat      # Spark aggregation job (profile: stat)
 #   docker compose --profile stat up -d trends   # Spark streaming job: hourly counts (profile: stat)
+#   docker compose run --rm stat --class com.github.olehbohatyi.mep.stat.TrendsBackfillApp /opt/mep/stat.jar
+#                                     # recount hourly counts from map_events (optional --from / --to)
 #
 # Both brokers answer to the network alias `broker`, so the apps need no
 # per-profile settings. From the host use localhost:${KAFKA_PORT} / ${REDPANDA_PORT}.
