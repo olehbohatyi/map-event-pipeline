@@ -28,14 +28,16 @@ object GateRoutes:
   // GET  /docs/openapi         — Swagger UI over the generated OpenAPI document (assets come from unpkg.com)
   // GET  /map                  — live map page (Leaflet and OpenStreetMap tiles load from the internet)
 
-  private val MaxRadiusKm   = 100.0
-  private val MaxLimit      = 500
-  private val DefaultRecent = 200
-  private val Heartbeat     = 15.seconds
+  private val MaxRadiusKm          = 100.0
+  private val MaxLimit             = 500
+  private val DefaultRecent        = 200
+  private val Heartbeat            = 15.seconds
   // How far ahead of the gate's clock a client's occurredAt may be (clock drift), before it is rejected
-  private val MaxClockSkew  = 5.minutes
-  private val DefaultHours  = 24
-  private val MaxHours      = 168
+  private val MaxClockSkew         = 5.minutes
+  private val DefaultHours         = 24
+  private val MaxHours             = 168
+  // How long an event submission waits for the rate limiter before it is let through as if Redis had failed
+  private[gate] val LimiterTimeout = 250.millis
 
   def apply(
       ingestion: IngestionService,
@@ -105,7 +107,8 @@ object GateRoutes:
 
   /** Event submissions are limited per client address, before the body is read. The address is the connection's: behind
     * a proxy every client shares the proxy's, so the limit then belongs in the proxy. If Redis fails, the request goes
-    * through (and is counted as `unavailable`): a missing limit is better than a gate that accepts nothing.
+    * through (and is counted as `unavailable`): a missing limit is better than a gate that accepts nothing. So does a
+    * Redis that does not answer within `LimiterTimeout`; without it a hanging Redis would hang every submission.
     */
   private def limited(limiter: RateLimiter)(route: Route[Any, Nothing]): Route[Any, Nothing] =
     route.transform { handle =>
@@ -113,6 +116,7 @@ object GateRoutes:
         val client = req.remoteAddress.fold("unknown")(_.getHostAddress)
         limiter
           .acquire(client)
+          .timeoutFail(RuntimeException(s"no answer within $LimiterTimeout"))(LimiterTimeout)
           .foldCauseZIO(
             cause =>
               ZIO.logWarningCause("rate limiter unavailable; request let through", cause) *>
