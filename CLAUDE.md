@@ -56,7 +56,8 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   keep the exclusions in both builds in step. Test streaming via `readStream.text` + `foreachBatch` (the memory sink
   cannot restart from a checkpoint, `MemoryStream` needs encoders); share `TestSpark.layer`, never stop the session. Hours the stream
   missed are recounted by `TrendsBackfillApp` from `map_events` through `Trends.counts` (the stream's own counting);
-  it only writes whole hours that ended an hour ago, so it never races the stream.
+  it only writes whole hours that ended an hour ago, so it does not race a running stream (after a checkpoint
+  reset the stream rewrites its first, partial hour: backfill again).
 - Telemetry (`core/telemetry/Telemetry`): no Java agent — trace context lives in a `FiberRef` (zio-telemetry
   `contextZIO`). Apps are `ZIOApp`s whose `bootstrap` builds the SDK, the one context store and the logging bridge;
   build `Telemetry.tracing`/`metrics` on top of that `Env`, never a second `contextZIO` (logs would lose trace ids).

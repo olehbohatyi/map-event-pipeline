@@ -74,7 +74,9 @@ object Trends:
   /** Kafka records a micro-batch skipped because the topic's retention deleted them before they were read: the batch
     * covers offsets `start` to `end` (Spark's JSON, `{"topic":{"partition":offset}}`) but read fewer rows. With
     * `failOnDataLoss` off Spark goes on from the oldest record left and only logs a warning per partition. A partition
-    * missing from `start` is new and counted from offset 0; the first batch of a new checkpoint has no `start`.
+    * missing from `start` is new and counted from offset 0; the first batch of a new checkpoint has no `start`. Offsets
+    * that hold no record (transaction markers, compacted records) would count too; the pipe's producer is neither
+    * transactional nor are the topics compacted, and the number only goes into a log line.
     */
   def skippedRecords(start: String, end: String, numInputRows: Long): Long =
     if start == null || end == null then 0L
