@@ -67,6 +67,11 @@ object GateApi:
       .invalidRequestAsJson
       .outErrors[ApiError](
         HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
+        // Answered by GateRoutes.limited before the request is read; declared here for the document
+        HttpCodec.error[ApiError.TooManyRequests](Status.TooManyRequests) ?? Doc.p(
+          "Too many events from this client address in the current window. `Retry-After` gives the seconds until " +
+            "the next window."
+        ),
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
 

@@ -13,6 +13,7 @@ import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
 import io.opentelemetry.api.trace.{ SpanKind, StatusCode }
 import scala.collection.mutable
+import com.github.olehbohatyi.mep.caches.RateLimiter
 import com.github.olehbohatyi.mep.domain.{ GeoPoint, MapEvent }
 
 object GateRoutes:
@@ -36,9 +37,15 @@ object GateRoutes:
   private val DefaultHours  = 24
   private val MaxHours      = 168
 
-  def apply(ingestion: IngestionService, query: QueryService, feed: LiveFeed, tracing: Tracing): Routes[Any, Nothing] =
+  def apply(
+      ingestion: IngestionService,
+      query: QueryService,
+      feed: LiveFeed,
+      limiter: RateLimiter,
+      tracing: Tracing,
+    ): Routes[Any, Nothing] =
     val known =
-      api(ingestion, query, feed) ++
+      api(ingestion, query, feed, limiter) ++
         SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
         Routes(Method.GET / "map" -> mapPage)
     Routes.fromIterable(known.routes.map(route => observed(tracing, route.routePattern.pathCodec.render)(route))) ++
@@ -83,10 +90,11 @@ object GateRoutes:
     Handler.fromResource("map/index.html").orDie.map(_.addHeader(Header.CacheControl.NoStore))
 
   // The API routes alone, without the docs and the map page
-  def api(ingestion: IngestionService, query: QueryService, feed: LiveFeed): Routes[Any, Nothing] =
+  def api(ingestion: IngestionService, query: QueryService, feed: LiveFeed, limiter: RateLimiter)
+      : Routes[Any, Nothing] =
     Routes(
       GateApi.health.implement(_ => ZIO.succeed("OK")),
-      GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key)),
+      limited(limiter)(GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key))),
       GateApi.nearby.implement((lat, lon, radius, limit) => getNearby(query, lat, lon, radius, limit)),
       GateApi.event.implement(id => getEvent(query, id)),
       GateApi.recent.implement(limit => getRecent(query, limit)),
@@ -94,6 +102,36 @@ object GateRoutes:
       GateApi.stats.implement(region => getStats(query, region)),
       GateApi.hourly.implement((region, hours) => getHourly(query, region, hours)),
     ).transform(_.contramap[Request](readBodyAsJson))
+
+  /** Event submissions are limited per client address, before the body is read. The address is the connection's: behind
+    * a proxy every client shares the proxy's, so the limit then belongs in the proxy. If Redis fails, the request goes
+    * through (and is counted as `unavailable`): a missing limit is better than a gate that accepts nothing.
+    */
+  private def limited(limiter: RateLimiter)(route: Route[Any, Nothing]): Route[Any, Nothing] =
+    route.transform { handle =>
+      Handler.scoped[Any](Handler.fromFunctionZIO[Request] { req =>
+        val client = req.remoteAddress.fold("unknown")(_.getHostAddress)
+        limiter
+          .acquire(client)
+          .foldCauseZIO(
+            cause =>
+              ZIO.logWarningCause("rate limiter unavailable; request let through", cause) *>
+                GateMetrics.rateLimit("unavailable").as(RateLimiter.Decision.Allowed),
+            ZIO.succeed(_),
+          )
+          .flatMap {
+            case RateLimiter.Decision.Allowed             => GateMetrics.rateLimit("allowed") *> handle(req)
+            case RateLimiter.Decision.Limited(retryAfter) =>
+              GateMetrics.rateLimit("limited").as(tooManyRequests(retryAfter))
+          }
+      })
+    }
+
+  private def tooManyRequests(retryAfter: Duration): Response =
+    Response
+      .json(ApiError.TooManyRequests("rate limit exceeded; retry later").toJson)
+      .status(Status.TooManyRequests)
+      .addHeader(Header.RetryAfter.ByDuration(retryAfter))
 
   // Bodies are JSON whatever Content-Type the client sends (`curl -d` says form-urlencoded), as before the Endpoint API;
   // zio-http picks the body decoder by that media type, so set it before decoding

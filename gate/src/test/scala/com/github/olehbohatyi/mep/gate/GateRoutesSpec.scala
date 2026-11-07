@@ -10,6 +10,7 @@ import zio.test.*
 import java.time.Instant
 import java.util.UUID
 
+import com.github.olehbohatyi.mep.caches.RateLimiter
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.stores.{ MapEventStat, MapEventTrend }
 import com.github.olehbohatyi.mep.testkit.{ Samples, TestTelemetry }
@@ -57,7 +58,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
       tracing <- ZIO.service[Tracing]
       res     <-
         ZIO.scoped {
-          GateRoutes(StubIngestion, StubQuery(calls), NoFeed, tracing)
+          GateRoutes(StubIngestion, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing)
             .runZIO(req)
             .flatMap(r => r.body.asString.orDie.map(r.status -> _))
         }
@@ -225,7 +226,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
           feed   <- LiveFeed.fromSource(ZStream.fromQueue(source))
           calls  <- Ref.make(List.empty[(GeoPoint, Double, Int)])
           res    <- GateRoutes
-                      .api(StubIngestion, StubQuery(calls), feed)
+                      .api(StubIngestion, StubQuery(calls), feed, RateLimiter.unlimited)
                       .runZIO(get("/api/v1/events/live?bbox=30,50,31,51"))
           seen   <- Ref.make("")
           reader <- res.body.asStream.via(ZPipeline.utf8Decode).runForeach(s => seen.update(_ + s)).fork
@@ -252,7 +253,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
         for
           calls   <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
           tracing <- ZIO.service[Tracing]
-          res     <- GateRoutes(StubIngestion, StubQuery(calls), NoFeed, tracing).runZIO(get("/map"))
+          res     <- GateRoutes(StubIngestion, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing).runZIO(get("/map"))
           body    <- res.body.asString.orDie
         yield assertTrue(
           res.status == Status.Ok,

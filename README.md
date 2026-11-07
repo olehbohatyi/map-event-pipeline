@@ -67,6 +67,12 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 
 - **Gate.** With an `Idempotency-Key` header, retries of the same request map to the same event id and are
   published once (Redis `SET NX`, 24 h). Without the header every request is a new event.
+- **Rate limit.** Each client address may submit 600 events a minute (`GATE_RATE_LIMIT_REQUESTS`,
+  `GATE_RATE_LIMIT_WINDOW_SECONDS`; 0 turns it off). More get `429` with `Retry-After` before the body is read, so
+  nothing is published. Fixed windows counted in Redis (`mep:gate:rate:*`) by one Lua script, so a counter always
+  expires: with `INCR` and `EXPIRE` sent apart, a gate stopped in between would block that client for good. If Redis
+  fails the request goes through: a missing limit is better than a gate that accepts nothing. The address is the
+  connection's, so behind a proxy the limit belongs in the proxy. `mep_rate_limit_decisions` counts the outcomes.
 - **Pipe.** At-least-once. Offsets are committed only after an event is handled. Transient failures are retried
   with backoff; if they persist, the stream stops without committing, so the record is redelivered after a restart.
   A malformed record is never dropped: it is published as-is to `map.events.dlq` with headers naming the error and
@@ -237,7 +243,8 @@ It mixes clients posting events (about one in ten retries a key, so duplicates t
 querying (`nearby`, `recent`, `hourly`) and following `/live` (each must receive an event), and a probe that posts an
 event and polls `GET /api/v1/events/{id}` until it is stored — its group's duration is the end-to-end latency. The run
 fails when more than 1% of requests fail or a p95 limit is exceeded; the HTML report lands in `target/gatling`. The
-**Load test** workflow runs a profile on demand in CI and keeps the report.
+**Load test** workflow runs a profile on demand in CI and keeps the report. All of its traffic comes from one address,
+so run the stack with `GATE_RATE_LIMIT_REQUESTS=0` for the baseline and stress profiles (the workflow does).
 
 Baseline profile (50 ingests/s, 20 queries/s, 10 live clients, 60 s) on a laptop (Docker Desktop, 4 CPUs, 3.8 GiB):
 
@@ -308,7 +315,7 @@ shows type, region, description and time.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `400` invalid. |
+| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `400` invalid, `429` over the client's rate limit (with `Retry-After`). |
 | `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Exact great-circle distance, nearest first, plus the region of the query point. |
 | `GET` | `/api/v1/events/{id}` | The event once the pipe has stored it; `404` before that. |
 | `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest events by occurrence time, newest first. |

@@ -76,8 +76,10 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   `COMPOSE_PROFILES=kafka,stat docker compose …`.
 - Quill 4.8 pulls zio-json 0.7; it is excluded in both builds because zio-json 1.x is used. Import Quill's
   `SnakeCase` explicitly — zio-json 1.x exports one too.
-- Gate idempotency keys (`mep:gate:idem:*`) and pipe processed ids (`mep:pipe:processed:*`) must stay in separate
-  Redis keyspaces.
+- Gate idempotency keys (`mep:gate:idem:*`), rate limit counters (`mep:gate:rate:*`) and pipe processed ids
+  (`mep:pipe:processed:*`) must stay in separate Redis keyspaces. The rate limit (`GateRoutes.limited`, POST events
+  only) counts and sets the expiry in one Lua script and lets requests through if Redis fails; the load test turns it
+  off (`GATE_RATE_LIMIT_REQUESTS=0`) because all its traffic comes from one address.
 - The pipe commits Kafka offsets only after an event is handled; persistent failures stop the stream instead of
   skipping, malformed records go to the `map.events.dlq` dead-letter topic (`RecordHandler`) before their offset is
   committed. Keep inserts idempotent (`onConflictIgnore`).

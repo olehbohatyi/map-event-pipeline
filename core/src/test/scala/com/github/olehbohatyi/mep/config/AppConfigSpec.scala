@@ -12,6 +12,7 @@ object AppConfigSpec extends ZIOSpecDefault:
       for cfg <- ZIO.service[AppConfig]
       yield assertTrue(
         cfg.http.port == 8080,
+        cfg.http.rateLimit == RateLimitConfig(600, 60),
         cfg.kafka.topics.raw == "map.events.raw",
         cfg.kafka.consumerGroup == "mep-pipe",
         cfg.kafka.topics.dlq == "map.events.dlq",

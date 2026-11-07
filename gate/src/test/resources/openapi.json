@@ -368,6 +368,17 @@
           "stats"
         ],
         "type" : "object"
+      },
+      "TooManyRequests" : {
+        "properties" : {
+          "error" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "error"
+        ],
+        "type" : "object"
       }
     }
   },
@@ -434,6 +445,17 @@
                 }
               }
             }
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/TooManyRequests",
+                  "description" : "Too many events from this client address in the current window. `Retry-After` gives the seconds until the next window.\n\n"
+                }
+              }
+            },
+            "description" : "Too many events from this client address in the current window. `Retry-After` gives the seconds until the next window.\n\n"
           },
           "500" : {
             "content" : {

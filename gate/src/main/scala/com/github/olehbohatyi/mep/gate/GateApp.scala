@@ -7,7 +7,7 @@ import zio.telemetry.opentelemetry.tracing.Tracing
 import javax.sql.DataSource
 
 import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
-import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RedisService }
+import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RateLimiter, RedisService }
 import com.github.olehbohatyi.mep.config.{ AppConfig, HttpConfig, KafkaConfig }
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, RegionRepo, StatsRepo, TrendsRepo }
@@ -31,6 +31,8 @@ object GateApp extends ZIOApp:
       ProducerService.live,
       RedisService.live,
       IdempotencyCache.live(IngestionService.Namespace),
+      ZLayer.fromFunction((http: HttpConfig) => http.rateLimit),
+      RateLimiter.live,
       GeoCache.live,
       RegionRepo.live,
       RegionResolver.live,
@@ -39,8 +41,10 @@ object GateApp extends ZIOApp:
       LiveFeed.live,
     )
 
-  private val program
-      : RIO[IngestionService & QueryService & LiveFeed & Tracing & HttpConfig & KafkaConfig & DataSource, Unit] =
+  private val program: RIO[
+    IngestionService & QueryService & LiveFeed & RateLimiter & Tracing & HttpConfig & KafkaConfig & DataSource,
+    Unit,
+  ] =
     for
       _         <- Migrations.run
       _         <- TopicBootstrap.run
@@ -48,12 +52,13 @@ object GateApp extends ZIOApp:
       ingestion <- ZIO.service[IngestionService]
       query     <- ZIO.service[QueryService]
       feed      <- ZIO.service[LiveFeed]
+      limiter   <- ZIO.service[RateLimiter]
       tracing   <- ZIO.service[Tracing]
       _         <- ZIO.logInfo(s"Gate listening on ${cfg.host}:${cfg.port}")
       // Ending the live streams first lets the server's graceful shutdown finish the remaining requests quickly;
       // otherwise it waits out its timeout on the endless streams (and `docker stop` kills the gate meanwhile)
       _         <- Server
-                     .serve(GateRoutes(ingestion, query, feed, tracing))
+                     .serve(GateRoutes(ingestion, query, feed, limiter, tracing))
                      .ensuring(feed.close)
                      .provide(Server.defaultWith(_.binding(cfg.host, cfg.port)))
     yield ()

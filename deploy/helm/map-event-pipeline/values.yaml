@@ -10,6 +10,9 @@ gate:
     limits: {memory: 768Mi}
   # The JVM's default heap is 25% of the memory limit; give it most of the container, as in compose
   javaOpts: -XX:MaxRAMPercentage=70
+  # Event submissions per client address per window (0 turns it off). Counted per connection address: behind an
+  # ingress or load balancer every client shares its address, so limit there instead
+  rateLimit: {requests: 600, windowSeconds: 60}
 
 pipe:
   image: map-event-pipe:latest
