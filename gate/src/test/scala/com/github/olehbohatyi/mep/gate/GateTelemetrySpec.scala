@@ -13,6 +13,7 @@ import io.opentelemetry.api.trace.{ SpanKind, StatusCode }
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
 import io.opentelemetry.sdk.trace.data.SpanData
 import scala.jdk.CollectionConverters.*
+import com.github.olehbohatyi.mep.caches.RateLimiter
 import com.github.olehbohatyi.mep.domain.GeoPoint
 import com.github.olehbohatyi.mep.testkit.TestTelemetry
 
@@ -32,7 +33,13 @@ object GateTelemetrySpec extends ZIOSpecDefault:
         .make(List.empty[(GeoPoint, Double, Int)])
         .flatMap { calls =>
           val routes =
-            GateRoutes(GateRoutesSpec.StubIngestion, GateRoutesSpec.StubQuery(calls), GateRoutesSpec.NoFeed, tracing)
+            GateRoutes(
+              GateRoutesSpec.StubIngestion,
+              GateRoutesSpec.StubQuery(calls),
+              GateRoutesSpec.NoFeed,
+              RateLimiter.unlimited,
+              tracing,
+            )
           ZIO.scoped((Routes.empty ++ routes).runZIO(req))
         }
     }

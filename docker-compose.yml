@@ -191,6 +191,8 @@ services:
       <<: *app-env
       GATE_HOST: 0.0.0.0
       GATE_PORT: "8080"
+      GATE_RATE_LIMIT_REQUESTS: ${GATE_RATE_LIMIT_REQUESTS:-600}
+      GATE_RATE_LIMIT_WINDOW_SECONDS: ${GATE_RATE_LIMIT_WINDOW_SECONDS:-60}
       JAVA_OPTS: -XX:MaxRAMPercentage=70
 
   pipe:

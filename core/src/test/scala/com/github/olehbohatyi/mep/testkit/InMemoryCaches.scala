@@ -2,7 +2,7 @@ package com.github.olehbohatyi.mep.testkit
 
 import zio.*
 
-import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache }
+import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RateLimiter }
 import com.github.olehbohatyi.mep.domain.GeoPoint
 
 // In-memory cache doubles for unit tests (TTLs are ignored)
@@ -24,3 +24,18 @@ final class InMemoryGeoCache(entries: Ref[Map[String, String]]) extends GeoCache
 
 object InMemoryGeoCache:
   val layer: ULayer[InMemoryGeoCache] = ZLayer(Ref.make(Map.empty[String, String]).map(InMemoryGeoCache(_)))
+
+// Allows `limit` requests per client, then limits it for good (windows are left to the Redis test); `failing` makes
+// every call fail, as an unreachable Redis would
+final class InMemoryRateLimiter(limit: Int, counts: Ref[Map[String, Int]], failing: Ref[Boolean]) extends RateLimiter:
+  def acquire(client: String): Task[RateLimiter.Decision] =
+    ZIO.whenZIO(failing.get)(ZIO.fail(RuntimeException("redis down"))) *>
+      counts
+        .modify(m => (m.getOrElse(client, 0) + 1, m.updated(client, m.getOrElse(client, 0) + 1)))
+        .map(n => if n <= limit then RateLimiter.Decision.Allowed else RateLimiter.Decision.Limited(42.seconds))
+  def seen: UIO[Map[String, Int]]                         = counts.get
+  def fail: UIO[Unit]                                     = failing.set(true)
+
+object InMemoryRateLimiter:
+  def make(limit: Int): UIO[InMemoryRateLimiter] =
+    (Ref.make(Map.empty[String, Int]) <*> Ref.make(false)).map((c, f) => InMemoryRateLimiter(limit, c, f))

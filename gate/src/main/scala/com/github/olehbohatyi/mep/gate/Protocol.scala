@@ -43,6 +43,8 @@ sealed trait ApiError:
   def error: String
 
 object ApiError:
-  final case class BadRequest(error: String) extends ApiError derives JsonCodec, Schema
-  final case class NotFound(error: String)   extends ApiError derives JsonCodec, Schema
-  final case class Internal(error: String)   extends ApiError derives JsonCodec, Schema
+  final case class BadRequest(error: String)      extends ApiError derives JsonCodec, Schema
+  final case class NotFound(error: String)        extends ApiError derives JsonCodec, Schema
+  final case class Internal(error: String)        extends ApiError derives JsonCodec, Schema
+  // Sent with a Retry-After header
+  final case class TooManyRequests(error: String) extends ApiError derives JsonCodec, Schema

@@ -11,6 +11,8 @@ data:
   KAFKA_BOOTSTRAP_SERVERS: {{ include "mep.kafkaServers" . | quote }}
   GATE_HOST: "0.0.0.0"
   GATE_PORT: {{ .Values.gate.port | quote }}
+  GATE_RATE_LIMIT_REQUESTS: {{ .Values.gate.rateLimit.requests | quote }}
+  GATE_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.gate.rateLimit.windowSeconds | quote }}
   {{- if .Values.lgtm.enabled }}
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://{{ include "mep.fullname" . }}-lgtm:4318"
   OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"

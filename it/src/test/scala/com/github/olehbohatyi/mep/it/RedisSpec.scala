@@ -5,6 +5,7 @@ import zio.redis.Redis
 import zio.test.*
 
 import com.github.olehbohatyi.mep.caches.*
+import com.github.olehbohatyi.mep.config.RateLimitConfig
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.gate.IngestionService
 import com.github.olehbohatyi.mep.pipe.{ DeduplicationService, EscalationService }
@@ -51,6 +52,39 @@ object RedisSpec extends ZIOSpecDefault:
         _      <- redis.set(legacyKey, "zone_3_2", expireTime = Some(1.minute))
         served <- cache.get(GeoPoint(3.1416, 2.7183))
       yield assertTrue(served.isEmpty)
+    },
+    test("the rate limiter counts per client in fixed windows that expire") {
+      for
+        redis  <- ZIO.service[Redis]
+        limiter = RateLimiter(redis, RateLimitConfig(requests = 3, windowSeconds = 2), namespace = "t-rate")
+        first  <- ZIO.foreach(1 to 4)(_ => limiter.acquire("10.0.0.1"))
+        other  <- limiter.acquire("10.0.0.2")
+        ttl    <- redis.pTtl("t-rate:10.0.0.1")
+        _      <- ZIO.sleep(2100.millis)
+        again  <- limiter.acquire("10.0.0.1")
+      yield assertTrue(
+        first.take(3).forall(_ == RateLimiter.Decision.Allowed),
+        first.last == RateLimiter.Decision.Limited(2.seconds),
+        other == RateLimiter.Decision.Allowed,
+        // Every counter expires: one left without a TTL would limit its client for good
+        ttl.toMillis > 0L && ttl.toMillis <= 2000L,
+        again == RateLimiter.Decision.Allowed,
+      )
+    },
+    // Regression guard for the counter's TTL: a key that lost it (written before the script set one) gets it back
+    test("a rate limit counter without an expiry gets one on the next request") {
+      for
+        redis  <- ZIO.service[Redis]
+        _      <- redis.set("t-rate:10.0.0.9", "7")
+        limiter = RateLimiter(redis, RateLimitConfig(requests = 3, windowSeconds = 60), namespace = "t-rate")
+        result <- limiter.acquire("10.0.0.9")
+        ttl    <- redis.pTtl("t-rate:10.0.0.9")
+      yield assertTrue(result == RateLimiter.Decision.Limited(60.seconds), ttl.toMillis > 0L)
+    },
+    test("rate limit counters use their own keyspace") {
+      assertTrue(
+        Set(RateLimiter.Namespace, IngestionService.Namespace, DeduplicationService.Namespace).size == 3
+      )
     },
     test("escalates Low to Medium once a region sees a burst") {
       val events = List.fill(EscalationService.Threshold.toInt)(
