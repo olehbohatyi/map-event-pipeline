@@ -2,13 +2,25 @@
 
 [![CI](https://github.com/olehbohatyi/map-event-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/olehbohatyi/map-event-pipeline/actions/workflows/ci.yml)
 
-A demo event pipeline for road sensor events, built with **Scala 3**, **ZIO 2**, **Kafka / Redpanda**,
-**PostgreSQL/PostGIS**, **Redis**, **Apache Spark** and **OpenTelemetry**.
+A road-event pipeline built to show backend work in **Scala 3** and **ZIO 2** end to end: an HTTP API, **Kafka /
+Redpanda**, a stream processor, **PostgreSQL/PostGIS**, **Redis**, **Apache Spark** batch and streaming jobs,
+**OpenTelemetry**, a load test and a Helm chart. Every part is tested against real infrastructure.
+
+![Live map: road events across Ukraine as they are processed, coloured by severity](docs/images/live-map.jpg)
 
 Clients post events to an HTTP gateway, a stream processor deduplicates, enriches, escalates and routes them,
 and Spark jobs aggregate per-region statistics that the gateway serves back: a batch job for the totals and a
 Structured Streaming job for hourly counts, kept current from Kafka. Traces, metrics and logs from the gateway and the
 processor go to Grafana over OpenTelemetry; one trace follows an event from the HTTP request through Kafka to Postgres.
+
+## At a glance
+
+| | |
+|---|---|
+| **Stack** | Scala 3, ZIO 2, zio-http, zio-kafka, Quill, Kafka / Redpanda, PostgreSQL + PostGIS, Redis, Spark 4, OpenTelemetry (Tempo, Prometheus, Loki, Grafana), Gatling, Docker, Helm |
+| **Performance** | CI baseline load test: 4,730 requests, 0 failed; `POST /api/v1/events` p95 18 ms; event posted → stored in Postgres p95 294 ms ([load testing](#load-testing-gatling)) |
+| **Tests** | 112 tests, 24 of them against real Postgres, Redis and Kafka (Testcontainers); a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
+| **Process** | 26 pull requests, each green in CI before merge; every phase began with a spike whose findings are in [docs/decisions.md](docs/decisions.md) |
 
 ## Highlights
 
@@ -21,10 +33,14 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
   upserts ([hourly trends](#hourly-trends-spark-structured-streaming)).
 - **Live map**: server-sent events from Kafka to a Leaflet page ([live map](#live-map)).
 - **OpenAPI** generated from the same zio-http endpoints that serve the API, guarded by a golden-file test.
+- **Rate limiting** per client in Redis, with one Lua script so a counter always expires, failing open when Redis
+  fails or hangs ([delivery guarantees](#delivery-guarantees)).
 - **Observability**: one OpenTelemetry trace from the HTTP request through Kafka to Postgres, metrics and trace-linked
   logs in Grafana ([observability](#observability-opentelemetry)).
 - **Measured, not guessed**: a Gatling load test found the pipe's bottleneck; the fix took baseline p95 from 12.2 s to
-  335 ms ([load testing](#load-testing-gatling)).
+  335 ms on a laptop, and the same profile in CI runs at 17 ms p95 ([load testing](#load-testing-gatling)).
+- **Found by running it**: a restart after ten days showed hourly trends missing 23,500 events lost to Kafka
+  retention; a backfill job now recounts them from Postgres ([hourly trends](#hourly-trends-spark-structured-streaming)).
 - **Deployable**: Docker images, Compose, and a Helm chart that CI installs on kind and smoke-tests.
 - **Built with Claude Code**, phase by phase, each starting with a spike — see [docs/decisions.md](docs/decisions.md)
   for what the spikes found.
@@ -193,7 +209,14 @@ scripts/demo.sh             # 50 random events around Ukrainian cities, one ever
 
 `docker compose up` also starts `grafana/otel-lgtm`: an OpenTelemetry collector with Tempo, Prometheus, Loki and
 Grafana. Grafana is at `localhost:3000` with the **Map Event Pipeline** dashboard (traffic, latency, ingest and
-processing rates, dead letters, live subscribers, recent traces, logs).
+processing rates, dead letters, live subscribers, rate limit decisions, recent traces, logs).
+
+![Grafana dashboard: requests and latency by route, ingest and processing rates, rate limit decisions, recent traces](docs/images/grafana.png)
+
+One `POST /api/v1/events` as a trace in Tempo: the gate's request and Kafka publish, then the pipe's processing steps
+for the same event.
+
+![Trace in Tempo: the gate's POST and Kafka publish, then the pipe's dedup, enrich, escalate, store and publish spans](docs/images/trace.png)
 
 - **Traces.** The gate opens a server span per request that continues the caller's `traceparent`; each Kafka record
   carries the producer span's context in its headers, and the pipe continues it, with a span per step (dedup check,
@@ -247,7 +270,17 @@ fails when more than 1% of requests fail or a p95 limit is exceeded; the HTML re
 **Load test** workflow runs a profile on demand in CI and keeps the report. All of its traffic comes from one address,
 so run the stack with `GATE_RATE_LIMIT_REQUESTS=0` for the baseline and stress profiles (the workflow does).
 
-Baseline profile (50 ingests/s, 20 queries/s, 10 live clients, 60 s) on a laptop (Docker Desktop, 4 CPUs, 3.8 GiB):
+Baseline profile (50 ingests/s, 20 queries/s, 10 live clients, 60 s) in CI, on a GitHub-hosted runner (Load test
+workflow, `main` at `e166366`, 2026-11-08):
+
+| | |
+|---|---|
+| requests | 4,730, none failed |
+| all requests p95 / p99 | 17 ms / 34 ms |
+| `POST /api/v1/events` p95 / p99 | 18 ms / 34 ms |
+| ingest → stored p95 / p99 | 294 ms / 498 ms |
+
+The same profile on a laptop (Docker Desktop, 4 CPUs, 3.8 GiB) is what found the pipe's bottleneck:
 
 | | pipe processing one record at a time | partitions in parallel |
 |---|---|---|
@@ -261,8 +294,9 @@ Baseline profile (50 ingests/s, 20 queries/s, 10 live clients, 60 s) on a laptop
   over all partitions, ~30 ms per event. Processing partitions in parallel, each in order, takes it to the ingest rate.
 - The first probe polled `/recent?limit=200`; as latency grew, its polling became two thirds of all requests and loaded
   the gate it was measuring. It now looks the event up by id.
-- Still open: the gate's producer waits longer for Kafka's acknowledgement than the pipe's on the same broker (p50
-  59 ms vs 8 ms), so the baseline's own limits (POST p95 < 500 ms, end to end < 3 s) are not met yet.
+- On the laptop the gate's producer also waited longer for Kafka's acknowledgement than the pipe's (p50 59 ms vs
+  8 ms), and the baseline's limits (POST p95 < 500 ms, end to end < 3 s) failed. That was the Docker VM (swapping,
+  GC pauses of about a second): on a CI runner the same code meets both limits with a wide margin, as above.
 
 ### Hourly trends (Spark Structured Streaming)
 
