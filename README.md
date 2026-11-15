@@ -153,9 +153,9 @@ coordinates, e.g. `Kyiv City`, `Lviv Oblast`, `Autonomous Republic of Crimea`.
 | zio-json · zio-schema · zio-config · zio-logging | 1.1.2 · 1.8.7 · 4.1.2 · 2.5.3 |
 | Quill (JDBC/ZIO) · Flyway · HikariCP | 4.8.6 · 13.11.1 · 7.1.0 |
 | Chimney | 2.1.0 |
-| zio-opentelemetry · OpenTelemetry SDK | 3.1.21 · 1.67.0 |
+| zio-opentelemetry · OpenTelemetry SDK | 3.1.21 · 1.68.0 |
 | grafana/otel-lgtm (collector, Tempo, Prometheus, Loki, Grafana) | 0.38.1, pinned by digest |
-| Spark | 4.2.1 |
+| Spark | 4.3.0 |
 | Testcontainers | 2.0.5 |
 | PostgreSQL + PostGIS · Redis | 18.6 + 3.6.4 (`postgis/postgis:18-3.6-alpine`, pinned by digest) · 8.6.3 |
 | Apache Kafka (KRaft) · Redpanda | 4.3.0 · v26.1.9 |
