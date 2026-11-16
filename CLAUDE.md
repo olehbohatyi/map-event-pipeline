@@ -64,7 +64,9 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   HTTP in (`GateRoutes.observed`), Kafka out (`ProducerService`) and in (`TraceHeaders.continue`) are instrumented by
   hand. zio-http's server merges the app with `++`, which keeps the *left* not-found handler, so unknown paths get a
   real catch-all route to be traced. Tests use `testkit.TestTelemetry` (`tracing` no-op, `recording` in-memory spans).
-  Metric labels must stay low-cardinality.
+  Metric labels must stay low-cardinality. `stat` cannot use any of this (no ZIO, no `core`): `StatTelemetry` builds the
+  plain SDK (metrics only, OTLP through the JDK's HTTP client so OkHttp and Kotlin stay out of `stat.jar`) and
+  `TrendsApp`'s listener records each batch's progress into `TrendsMetrics`; test with an `InMemoryMetricReader`.
 - Load test (`load`): Gatling's Java DSL from Scala 3 — `then` needs backticks, import only `Simulation` from
   `io.gatling.javaapi.core` (its package also has an `exec`), and the forked JVM needs
   `--add-opens=java.base/java.lang=ALL-UNNAMED`. A probe must not add load that grows with latency (it polls the

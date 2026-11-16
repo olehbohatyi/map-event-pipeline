@@ -209,7 +209,7 @@ scripts/demo.sh             # 50 random events around Ukrainian cities, one ever
 
 `docker compose up` also starts `grafana/otel-lgtm`: an OpenTelemetry collector with Tempo, Prometheus, Loki and
 Grafana. Grafana is at `localhost:3000` with the **Map Event Pipeline** dashboard (traffic, latency, ingest and
-processing rates, dead letters, live subscribers, rate limit decisions, recent traces, logs).
+processing rates, dead letters, live subscribers, rate limit decisions, the trends stream, recent traces, logs).
 
 ![Grafana dashboard: requests and latency by route, ingest and processing rates, rate limit decisions, recent traces](docs/images/grafana.png)
 
@@ -226,6 +226,12 @@ for the same event.
   `mep_records_dead_lettered`, `mep_event_processing_duration_ms`, `mep_live_subscribers`), plus ZIO's runtime and
   zio-kafka's own metrics, exported through zio-opentelemetry's bridge. Requests are labelled by route template
   (`/api/v1/events/{id}`) and unknown paths as `unmatched`, so neither ids nor a scanner can create unbounded labels.
+- **The Spark streaming job** exports its own metrics through the plain OpenTelemetry SDK (it does not run on ZIO), from
+  each micro-batch's progress: records read (`mep_trends_input_records`), events dropped as late and records skipped
+  after retention (`mep_trends_late_events`, `mep_trends_skipped_records`), Kafka lag, batch duration, hourly counts
+  written and query failures. Spark otherwise reports these only in the Spark UI, which compose does not expose. The
+  one-shot jobs (`StatApp`, `TrendsBackfillApp`) export nothing: they exit before a scrape interval passes, and their
+  result is in their log line and their table.
 - **Logs.** ZIO logs go to Loki with the `trace_id` and `span_id` of the fiber that wrote them (Grafana links log lines
   and traces both ways); the console output stays as it was.
 - **No Java agent.** A spike with the OpenTelemetry agent on JDK 27 lost the caller's trace at the HTTP boundary: the
@@ -307,14 +313,15 @@ serves it.
 - Windows are by `createdAt`, the gate's receive time. Spark's watermark follows the newest event time seen, so
   windowing by the client's `occurredAt` would let one wrong clock mark every later event as late.
 - Events more than 10 minutes behind the newest one seen are dropped as late (the batch job still counts them); the
-  job logs how many each batch dropped, from Spark's progress report.
+  job logs and counts how many each batch dropped, from Spark's progress report (see
+  [observability](#observability-opentelemetry)).
 - The pipe may publish an event twice after a retry: duplicates are dropped by id within the watermark.
 - Each micro-batch carries the full count of every window it changed (update mode) and is upserted, so a batch that
   Spark replays after a crash writes the same values again. Checked: forcing a replay restored a count edited by hand.
 - The checkpoint (Kafka offsets and de-duplication state) lives in the `trends_checkpoint` volume. A fresh checkpoint
   starts from the oldest retained record, so the table is filled from the topic's retention (7 days) first. If
   the job was stopped for longer than the retention, it continues from the oldest record left (`failOnDataLoss`
-  off) instead of failing on every restart, and logs how many records it skipped.
+  off) instead of failing on every restart, and logs and counts how many records it skipped.
 - Hours the stream could not count in full (records deleted by retention, events dropped as late) are recounted from
   `map_events` by `TrendsBackfillApp`. It writes the same rows the stream does (a test checks both on the same
   events) and only whole hours that ended an hour or more ago, so it can run while the stream does. A new checkpoint

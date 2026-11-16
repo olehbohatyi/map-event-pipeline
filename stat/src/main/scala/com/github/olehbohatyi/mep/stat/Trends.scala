@@ -67,7 +67,7 @@ object Trends:
       .start()
 
   // Rows the stateful operators discarded as late in one micro-batch. Spark drops them without a log line and only
-  // reports the number in the batch's progress, so the job logs it from there.
+  // reports the number in the batch's progress, so the job logs and counts it from there.
   def droppedLate(progress: StreamingQueryProgress): Long =
     progress.stateOperators.map(_.numRowsDroppedByWatermark).sum
 
@@ -76,7 +76,7 @@ object Trends:
     * `failOnDataLoss` off Spark goes on from the oldest record left and only logs a warning per partition. A partition
     * missing from `start` is new and counted from offset 0; the first batch of a new checkpoint has no `start`. Offsets
     * that hold no record (transaction markers, compacted records) would count too; the pipe's producer is neither
-    * transactional nor are the topics compacted, and the number only goes into a log line.
+    * transactional nor are the topics compacted, and the number only goes into a log line and a metric.
     */
   def skippedRecords(start: String, end: String, numInputRows: Long): Long =
     if start == null || end == null then 0L
@@ -84,6 +84,26 @@ object Trends:
       val from  = offsets(start)
       val range = offsets(end).map((partition, to) => math.max(0L, to - from.getOrElse(partition, 0L))).sum
       math.max(0L, range - numInputRows)
+
+  /** Records on the topic past what a batch read: Spark's `latestOffset` (the newest offsets it saw when planning the
+    * batch) minus its `endOffset`, summed over partitions. Unknown until a Kafka batch reports both.
+    */
+  def kafkaLag(end: String, latest: String): Option[Long] =
+    if end == null || latest == null then None
+    else
+      val read = offsets(end)
+      Some(offsets(latest).map((partition, newest) => math.max(0L, newest - read.getOrElse(partition, 0L))).sum)
+
+  /** One batch's numbers for the job's metrics. Only the Kafka source counts towards `skipped` and `lag`. */
+  def batchStats(progress: StreamingQueryProgress): BatchStats =
+    val kafka = progress.sources.filter(_.description.startsWith("KafkaV2")).toList
+    BatchStats(
+      inputRows = progress.numInputRows,
+      droppedLate = droppedLate(progress),
+      skipped = kafka.map(s => skippedRecords(s.startOffset, s.endOffset, s.numInputRows)).sum,
+      lag = kafka.flatMap(s => kafkaLag(s.endOffset, s.latestOffset)).reduceOption(_ + _),
+      durationMs = Option(progress.durationMs.get("triggerExecution")).map(_.longValue),
+    )
 
   private def offsets(json: String): Map[(String, String), Long] =
     val topics = new ObjectMapper().readTree(json)
