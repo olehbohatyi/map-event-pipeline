@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Scala Steward's workflow dispatches this for its pull requests (see scala-steward.yml)
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
