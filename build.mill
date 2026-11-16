@@ -17,7 +17,7 @@ object V {
   val zioSchema  = "1.9.0"
   val zioOtel    = "3.1.21"
   val otel       = "1.68.0"
-  val zioLogging = "2.5.3"
+  val zioLogging = "2.5.4"
   val quill      = "4.8.6"
   val postgres   = "42.7.14"
   val hikari     = "7.1.0"
