@@ -22,7 +22,7 @@ object Versions {
   val chimney    = "2.1.0"
   val spark      = "4.3.0"
   val testcont   = "2.0.5"
-  val gatling    = "3.16.0"
+  val gatling    = "3.16.1"
 }
 
 object Dependencies {
