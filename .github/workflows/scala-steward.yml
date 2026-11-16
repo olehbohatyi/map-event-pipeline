@@ -38,6 +38,7 @@ jobs:
             runs=$(gh run list --workflow ci.yml --event workflow_dispatch --commit "$sha" --json databaseId --jq length)
             if [ "$runs" = 0 ]; then
               echo "CI on $branch ($sha)"
-              gh workflow run ci.yml --ref "$branch"
+              # A branch made before ci.yml could be dispatched cannot be; Steward rebases it on its next run
+              gh workflow run ci.yml --ref "$branch" || echo "::warning::could not start CI on $branch"
             fi
           done
