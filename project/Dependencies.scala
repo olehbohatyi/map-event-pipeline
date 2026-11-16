@@ -6,7 +6,7 @@ object Versions {
   val scalaSpark = "3.7.4" // scala-steward:off — last Scala 3 on the 2.13 stdlib that Spark 4.x links against
   val zio        = "2.1.27"
   val zioConfig  = "4.1.2"
-  val zioKafka   = "3.8.2"
+  val zioKafka   = "4.2.0"
   val zioHttp    = "3.11.6"
   val zioRedis   = "1.3.2"
   val zioJson    = "1.1.2"
