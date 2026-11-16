@@ -146,20 +146,20 @@ coordinates, e.g. `Kyiv City`, `Lviv Oblast`, `Autonomous Republic of Crimea`.
 
 | | Version |
 |---|---|
-| Scala | 3.10.0 (`stat`: 3.7.4, see below) |
+| Scala | 3.10.1 (`stat`: 3.7.4, see below) |
 | JDK | 27 (`stat` runs on 21) |
 | ZIO / zio-streams / zio-test | 2.1.27 |
-| zio-http · zio-kafka · zio-redis | 3.11.6 · 3.8.2 · 1.3.2 |
-| zio-json · zio-schema · zio-config · zio-logging | 1.1.2 · 1.8.7 · 4.1.2 · 2.5.3 |
-| Quill (JDBC/ZIO) · Flyway · HikariCP | 4.8.6 · 13.11.1 · 7.1.0 |
-| Chimney | 2.1.0 |
+| zio-http · zio-kafka · zio-redis | 3.11.6 · 4.1.0 · 1.3.2 |
+| zio-json · zio-schema · zio-config · zio-logging | 1.1.2 · 1.9.1 · 4.1.2 · 2.5.4 |
+| Quill (JDBC/ZIO) · Flyway · HikariCP | 4.8.6 · 13.12.2 · 7.1.0 |
+| Chimney | 2.1.1 |
 | zio-opentelemetry · OpenTelemetry SDK | 3.1.21 · 1.68.0 |
 | grafana/otel-lgtm (collector, Tempo, Prometheus, Loki, Grafana) | 0.38.1, pinned by digest |
 | Spark | 4.3.0 |
 | Testcontainers | 2.0.5 |
 | PostgreSQL + PostGIS · Redis | 18.6 + 3.6.4 (`postgis/postgis:18-3.6-alpine`, pinned by digest) · 8.6.3 |
 | Apache Kafka (KRaft) · Redpanda | 4.3.0 · v26.1.9 |
-| sbt · mill | 2.0.11 · 1.3.1 |
+| sbt · mill | 2.1.0 · 1.3.1 |
 
 **Why `stat` is different:** Spark 4.x links against the Scala 2.13 standard library. From Scala 3.8 on, the standard
 library is compiled by Scala 3, and Spark's runtime reflection fails on it. Spark also does not run on JDK 24+. So
