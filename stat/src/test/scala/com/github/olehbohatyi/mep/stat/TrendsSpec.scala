@@ -150,7 +150,6 @@ object TrendsSpec extends ZIOSpecDefault:
                    )
       yield assertTrue(s.counts.size == 3, recount == s.counts)
     },
-    // Regression: records deleted by retention while the job was stopped were skipped with only Spark's warning
     test("reports what each batch read and how long it took") {
       for
         s       <- stream
@@ -173,6 +172,7 @@ object TrendsSpec extends ZIOSpecDefault:
         Trends.kafkaLag(s"""{"$topic":{"0":40}}""", null) == None,
       )
     },
+    // Regression: records deleted by retention while the job was stopped were skipped with only Spark's warning
     test("counts the records a batch skipped because retention deleted them") {
       val topic = "map.events.enriched"
       assertTrue(
