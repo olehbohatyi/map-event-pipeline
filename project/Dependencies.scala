@@ -2,7 +2,7 @@ import sbt.*
 
 // Single source of versions for the sbt build — keep build.mill in sync
 object Versions {
-  val scala      = "3.10.0"
+  val scala      = "3.10.1"
   val scalaSpark = "3.7.4" // scala-steward:off — last Scala 3 on the 2.13 stdlib that Spark 4.x links against
   val zio        = "2.1.27"
   val zioConfig  = "4.1.2"
