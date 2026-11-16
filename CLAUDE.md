@@ -35,6 +35,9 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - Commits: single-line Conventional Commits (`feat(gate): …`, `fix(pipe): …`), no body, no co-author trailer.
   One branch + PR per phase; CI must be green before merge.
 - Versions live in **both** `project/Dependencies.scala` and `build.mill`; change them together.
+- Scala Steward opens its PRs with `GITHUB_TOKEN`, so their `pull_request` CI run waits for approval and never starts;
+  its workflow dispatches `ci.yml` on each new head commit instead. A Spark bump also needs the Dockerfile's image
+  tag, and every bump the README's version table.
 
 ## Gotchas
 

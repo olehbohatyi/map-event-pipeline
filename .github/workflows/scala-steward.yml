@@ -8,6 +8,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # To dispatch CI on its pull requests
+  actions: write
 
 jobs:
   scala-steward:
@@ -21,3 +23,21 @@ jobs:
       - uses: scala-steward-org/scala-steward-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      # A pull request opened or updated with GITHUB_TOKEN gets a CI run that waits for approval and never starts a
+      # job. GITHUB_TOKEN may still dispatch a workflow; the run's checks land on the head commit, so the PR shows them.
+      # Each head commit is dispatched once, so a rerun of this workflow does not repeat CI.
+      - name: Run CI on Scala Steward's pull requests
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh pr list --author app/github-actions --state open --json headRefName,headRefOid \
+            --jq '.[] | select(.headRefName | startswith("update/")) | "\(.headRefName) \(.headRefOid)"' |
+          while read -r branch sha; do
+            runs=$(gh run list --workflow ci.yml --event workflow_dispatch --commit "$sha" --json databaseId --jq length)
+            if [ "$runs" = 0 ]; then
+              echo "CI on $branch ($sha)"
+              gh workflow run ci.yml --ref "$branch"
+            fi
+          done
