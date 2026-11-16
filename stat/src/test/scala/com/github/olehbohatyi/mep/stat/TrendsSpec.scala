@@ -41,8 +41,8 @@ object TrendsSpec extends ZIOSpecDefault:
       ZIO.attemptBlocking(Files.writeString(in.resolve(s"$name.json"), lines.mkString("\n"))).unit
 
     // Processes what is there and stops, like a restart of the job would from the same checkpoint.
-    // Returns how many rows the run dropped as late.
-    def runOnce: RIO[SparkSession, Long] =
+    // Returns the run's batches as the job's metrics see them.
+    def runOnce: RIO[SparkSession, List[BatchStats]] =
       ZIO.serviceWithZIO[SparkSession] { spark =>
         ZIO.attemptBlocking {
           val query = Trends
@@ -50,7 +50,7 @@ object TrendsSpec extends ZIOSpecDefault:
               collect(batch).foreach(table.put)
             }
           query.awaitTermination()
-          query.recentProgress.map(Trends.droppedLate).sum
+          query.recentProgress.toList.map(Trends.batchStats)
         }
       }
 
@@ -112,8 +112,8 @@ object TrendsSpec extends ZIOSpecDefault:
         first == Map((hour(10), "Kyiv City", "Hazard") -> 1L, (hour(11), "Kyiv City", "Hazard") -> 1L),
         s.counts == Map((hour(10), "Kyiv City", "Hazard") -> 1L, (hour(11), "Kyiv City", "Hazard") -> 3L),
         // Regression: late events were dropped without a trace; the job now logs this count per batch
-        early == 0L,
-        dropped == 2L,
+        early.map(_.droppedLate).sum == 0L,
+        dropped.map(_.droppedLate).sum == 2L,
       )
     },
     test("windows by the gate's receive time, so a client's wrong clock cannot make later events late") {
@@ -151,6 +151,28 @@ object TrendsSpec extends ZIOSpecDefault:
       yield assertTrue(s.counts.size == 3, recount == s.counts)
     },
     // Regression: records deleted by retention while the job was stopped were skipped with only Spark's warning
+    test("reports what each batch read and how long it took") {
+      for
+        s       <- stream
+        _       <- s.add("1", event("a", "2026-10-27T10:05:00Z"), event("b", "2026-10-27T10:06:00Z"), "{oops")
+        batches <- s.runOnce
+      yield assertTrue(
+        // Unreadable records are read too, then filtered out
+        batches.map(_.inputRows).sum == 3L,
+        batches.forall(_.durationMs.exists(_ >= 0L)),
+        // Not a Kafka source: nothing skipped, no lag
+        batches.forall(b => b.skipped == 0L && b.lag.isEmpty),
+      )
+    },
+    test("Kafka lag is what the topic holds past the batch's end offsets") {
+      val topic = "map.events.enriched"
+      assertTrue(
+        Trends.kafkaLag(s"""{"$topic":{"0":40,"1":50}}""", s"""{"$topic":{"0":45,"1":50}}""") == Some(5L),
+        // A partition the batch has not read yet counts from offset 0
+        Trends.kafkaLag(s"""{"$topic":{"0":40}}""", s"""{"$topic":{"0":40,"1":7}}""") == Some(7L),
+        Trends.kafkaLag(s"""{"$topic":{"0":40}}""", null) == None,
+      )
+    },
     test("counts the records a batch skipped because retention deleted them") {
       val topic = "map.events.enriched"
       assertTrue(

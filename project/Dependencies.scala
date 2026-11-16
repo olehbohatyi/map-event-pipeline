@@ -74,14 +74,22 @@ object Dependencies {
   )
 
   // Traces, metrics and logs over OTLP: the SDK is configured from the standard OTEL_* environment variables
-  val telemetry   = Seq(
+  val telemetry     = Seq(
     "dev.zio"         %% "zio-opentelemetry"                         % Versions.zioOtel,
     "io.opentelemetry" % "opentelemetry-sdk"                         % Versions.otel,
     "io.opentelemetry" % "opentelemetry-exporter-otlp"               % Versions.otel,
     "io.opentelemetry" % "opentelemetry-sdk-extension-autoconfigure" % Versions.otel,
   )
+  // The Spark jobs' metrics: the plain SDK (no ZIO), bundled into stat.jar. The OTLP exporter sends through the JDK's
+  // HTTP client instead of OkHttp, which would add OkHttp and the Kotlin stdlib to the jar
+  val statTelemetry = Seq(
+    "io.opentelemetry"  % "opentelemetry-sdk-extension-autoconfigure" % Versions.otel,
+    ("io.opentelemetry" % "opentelemetry-exporter-otlp"               % Versions.otel)
+      .exclude("io.opentelemetry", "opentelemetry-exporter-sender-okhttp"),
+    "io.opentelemetry"  % "opentelemetry-exporter-sender-jdk"         % Versions.otel,
+  )
   // In-memory exporters, to assert span structure in tests
-  val otelTesting = "io.opentelemetry" % "opentelemetry-sdk-testing" % Versions.otel % Test
+  val otelTesting   = "io.opentelemetry" % "opentelemetry-sdk-testing" % Versions.otel % Test
 
   val zioTest = Seq(
     "dev.zio" %% "zio-test"     % Versions.zio % Test,
@@ -120,5 +128,5 @@ object Dependencies {
   val loadDeps: Seq[ModuleID] = Seq("io.gatling.highcharts" % "gatling-charts-highcharts" % Versions.gatling)
 
   // Spark ships its own Scala 2.13 stdlib and runtime; only the JDBC driver goes into the assembly
-  val statDeps: Seq[ModuleID] = Seq(sparkSql % Provided, sparkKafka, postgres) ++ zioTest
+  val statDeps: Seq[ModuleID] = Seq(sparkSql % Provided, sparkKafka, postgres, otelTesting) ++ statTelemetry ++ zioTest
 }
