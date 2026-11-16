@@ -149,7 +149,7 @@ coordinates, e.g. `Kyiv City`, `Lviv Oblast`, `Autonomous Republic of Crimea`.
 | Scala | 3.10.1 (`stat`: 3.7.4, see below) |
 | JDK | 27 (`stat` runs on 21) |
 | ZIO / zio-streams / zio-test | 2.1.27 |
-| zio-http · zio-kafka · zio-redis | 3.11.6 · 4.1.0 · 1.3.2 |
+| zio-http · zio-kafka · zio-redis | 3.11.6 · 4.2.0 · 1.3.2 |
 | zio-json · zio-schema · zio-config · zio-logging | 1.1.2 · 1.9.1 · 4.1.2 · 2.5.4 |
 | Quill (JDBC/ZIO) · Flyway · HikariCP | 4.8.6 · 13.12.2 · 7.1.0 |
 | Chimney | 2.1.1 |
