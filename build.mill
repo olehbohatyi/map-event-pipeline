@@ -23,7 +23,7 @@ object V {
   val hikari     = "7.1.0"
   val flyway     = "13.12.1"
   val logback    = "1.6.7"
-  val chimney    = "2.1.0"
+  val chimney    = "2.1.1"
   val spark      = "4.3.0"
   val testcont   = "2.0.5"
   val gatling    = "3.16.1"
