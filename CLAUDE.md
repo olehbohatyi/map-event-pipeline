@@ -37,7 +37,8 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - Versions live in **both** `project/Dependencies.scala` and `build.mill`; change them together.
 - Scala Steward opens its PRs with `GITHUB_TOKEN`, so their `pull_request` CI run waits for approval and never starts;
   its workflow dispatches `ci.yml` on each new head commit instead. A dispatch runs the branch's own `ci.yml`, so
-  Steward rebases its PRs whenever main moves (`updatePullRequests = "always"`); a push of ours stops that. A Spark bump also needs the Dockerfile's image
+  Steward rebases its PRs whenever main moves (`updatePullRequests = "always"`); a push of ours stops that. A
+  dispatched run's checks do not show in the PR's checks, so it posts a `CI (dispatched)` commit status, which does. A Spark bump also needs the Dockerfile's image
   tag, and every bump the README's version table.
 
 ## Gotchas

@@ -12,6 +12,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A dispatched run's checks are on the commit but not in a pull request's checks, so it reports itself as a commit
+  # status, which the pull request does show: pending now, the result in `status` below
+  started:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Report the run as pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}"
+          -f state=pending -f context="CI (dispatched)" -f description="sbt, mill, docker, k8s: running"
+          -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   sbt:
     runs-on: ubuntu-latest
     steps:
@@ -81,3 +97,20 @@ jobs:
           kubectl describe pods | tail -100
           kubectl logs deploy/mep-gate --all-containers --tail=100 || true
           kubectl logs deploy/mep-pipe --all-containers --tail=100 || true
+
+  status:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+    needs: [sbt, mill, docker, k8s]
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Report the result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # A cancelled job (a newer run on the branch) is an error, not a failure of the change
+          STATE: ${{ contains(needs.*.result, 'failure') && 'failure' || (contains(needs.*.result, 'cancelled') && 'error' || 'success') }}
+        run: >-
+          gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}"
+          -f state="$STATE" -f context="CI (dispatched)" -f description="sbt, mill, docker, k8s: $STATE"
+          -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
