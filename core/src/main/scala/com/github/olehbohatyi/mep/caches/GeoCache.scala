@@ -3,6 +3,7 @@ package com.github.olehbohatyi.mep.caches
 import zio.*
 import zio.redis.*
 
+import com.github.olehbohatyi.mep.caches.RedisService.bounded
 import com.github.olehbohatyi.mep.domain.GeoPoint
 
 // Caches the region resolved for a point, keyed by coordinates rounded to ~11 m.
@@ -27,7 +28,7 @@ object GeoCache:
   final private class GeoCacheLive(redis: Redis) extends GeoCache:
 
     def get(point: GeoPoint): Task[Option[String]] =
-      redis.get(key(point)).returning[String]
+      redis.get(key(point)).returning[String].bounded
 
     def put(point: GeoPoint, region: String, ttl: Duration): Task[Unit] =
-      redis.set(key(point), region, expireTime = Some(ttl)).unit
+      redis.set(key(point), region, expireTime = Some(ttl)).unit.bounded

@@ -18,6 +18,10 @@ object AppConfigSpec extends ZIOSpecDefault:
         cfg.kafka.topics.dlq == "map.events.dlq",
         cfg.kafka.topicSettings == TopicSettings(3, 1, 168, 336),
         cfg.postgres.maxPool == 10,
+        // A broker or Postgres that stops answering fails a call within these instead of hanging it
+        cfg.kafka.deliveryTimeout == 10.seconds,
+        cfg.postgres.connectTimeout == 5.seconds,
+        cfg.postgres.socketTimeout == 30.seconds,
       )
     },
     test("splits comma-separated bootstrap servers") {

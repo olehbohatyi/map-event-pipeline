@@ -19,7 +19,7 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 |---|---|
 | **Stack** | Scala 3, ZIO 2, zio-http, zio-kafka, Quill, Kafka / Redpanda, PostgreSQL + PostGIS, Redis, Spark 4, OpenTelemetry (Tempo, Prometheus, Loki, Grafana), Gatling, Docker, Helm |
 | **Performance** | CI baseline load test: 4,730 requests, 0 failed; `POST /api/v1/events` p95 18 ms; event posted → stored in Postgres p95 294 ms ([load testing](#load-testing-gatling)) |
-| **Tests** | 112 tests, 24 of them against real Postgres, Redis and Kafka (Testcontainers); a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
+| **Tests** | 126 tests, 29 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
 | **Process** | 26 pull requests, each green in CI before merge; every phase began with a spike whose findings are in [docs/decisions.md](docs/decisions.md) |
 
 ## Highlights
@@ -82,7 +82,11 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 ### Delivery guarantees
 
 - **Gate.** With an `Idempotency-Key` header, retries of the same request map to the same event id and are
-  published once (Redis `SET NX`, 24 h). Without the header every request is a new event.
+  published once (Redis `SET NX`, 24 h). Without the header every request is a new event. The key is *pending*
+  while its event is being published: a retry then gets `409` (retry later), never `200 duplicate`, because the first
+  attempt can still fail. Only a published event makes later retries duplicates. A publish waits at most 10 s for the
+  broker (`KAFKA_DELIVERY_TIMEOUT`); if it fails the key is released, and if the gate dies mid-publish the pending key
+  expires after 50 s instead of blocking the client for a day.
 - **Rate limit.** Each client address may submit 600 events a minute (`GATE_RATE_LIMIT_REQUESTS`,
   `GATE_RATE_LIMIT_WINDOW_SECONDS`; 0 turns it off). More get `429` with `Retry-After` before the body is read, so
   nothing is published. Fixed windows counted in Redis (`mep:gate:rate:*`) by one Lua script, so a counter always
@@ -92,6 +96,10 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
   `mep_rate_limit_decisions` counts the outcomes.
 - **Pipe.** At-least-once. Offsets are committed only after an event is handled. Transient failures are retried
   with backoff; if they persist, the stream stops without committing, so the record is redelivered after a restart.
+  Every call is bounded, so a dependency that stops answering is a failure, not a hang: a pooled Postgres connection
+  within 5 s and a statement within 30 s (`POSTGRES_CONNECT_TIMEOUT`, `POSTGRES_SOCKET_TIMEOUT`), a Redis command
+  within 2 s, a publish within 10 s. `OutageSpec` freezes each one (`docker pause`, which hangs connections instead of
+  refusing them) and checks that the pipe stops and, after a restart, stores the event once.
   A malformed record is never dropped: it is published as-is to `map.events.dlq` with headers naming the error and
   its source topic, partition and offset, and only then committed. Writes are idempotent (`ON CONFLICT DO NOTHING`),
   and processed ids are remembered for 48 h under their own Redis keyspace.
@@ -357,7 +365,7 @@ shows type, region, description and time.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `400` invalid, `429` over the client's rate limit (with `Retry-After`). |
+| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `409` a request with the same key is still in progress (retry it), `400` invalid, `429` over the client's rate limit (with `Retry-After`). |
 | `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Exact great-circle distance, nearest first, plus the region of the query point. |
 | `GET` | `/api/v1/events/{id}` | The event once the pipe has stored it; `404` before that. |
 | `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest events by occurrence time, newest first. |

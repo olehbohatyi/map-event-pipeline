@@ -90,6 +90,12 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - The pipe commits Kafka offsets only after an event is handled; persistent failures stop the stream instead of
   skipping, malformed records go to the `map.events.dlq` dead-letter topic (`RecordHandler`) before their offset is
   committed. Keep inserts idempotent (`onConflictIgnore`).
+- Every call to Postgres, Redis and Kafka is bounded (`PostgresConfig` connect/socket timeouts,
+  `RedisService.CommandTimeout` via `.bounded`, `KafkaConfig.deliveryTimeout`): retries only help if a frozen
+  dependency fails the call. New Redis commands go through `.bounded`. A gate idempotency key holds
+  `IngestionService.Pending` until its event is published (`409` to a retry meanwhile, never `200 duplicate`); keys
+  from older gates hold `"1"` and count as published. `it/OutageSpec` freezes containers with `docker pause`
+  (`Containers.*WithOutage`); stopping them would lose the mapped ports.
 - Broker auto-create is off (compose and the Testcontainers Kafka). New topics must be added to `TopicsConfig` so
   `TopicBootstrap` creates them; tests build Kafka config with `testkit.TestKafka.config`.
 - PostGIS: `map_events.geog` is a generated column — never write it, and `MapEventRow` deliberately does not map it.

@@ -67,6 +67,10 @@ object GateApi:
       .invalidRequestAsJson
       .outErrors[ApiError](
         HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
+        HttpCodec.error[ApiError.Conflict](Status.Conflict) ?? Doc.p(
+          "Another request with this Idempotency-Key is still being published, or has just failed to be. Nothing is " +
+            "known to be published yet: retry the request."
+        ),
         // Answered by GateRoutes.limited before the request is read; declared here for the document
         HttpCodec.error[ApiError.TooManyRequests](Status.TooManyRequests) ?? Doc.p(
           "Too many events from this client address in the current window. `Retry-After` gives the seconds until " +

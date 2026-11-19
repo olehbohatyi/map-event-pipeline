@@ -4,6 +4,7 @@ import zio.*
 import zio.kafka.admin.{ AdminClient, AdminClientSettings }
 
 import com.github.olehbohatyi.mep.config.*
+import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.kafka.KafkaContainer
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -43,6 +44,46 @@ object Containers:
         cfg = TestKafka.config(servers = c.getBootstrapServers, group = "mep-it")
         _  <- untilReachable(cfg)
       yield cfg
+    )
+
+  /** Freezes a container's processes (`docker pause`), like a network partition: open connections hang and new ones
+    * time out, instead of being refused. Stopping it would also lose its mapped port.
+    */
+  final class Outage(container: GenericContainer[?]):
+    private def docker                             = DockerClientFactory.instance().client()
+    val begin: Task[Unit]                          =
+      ZIO.attemptBlocking(docker.pauseContainerCmd(container.getContainerId).exec()).unit
+    val end: Task[Unit]                            =
+      ZIO.attemptBlocking(docker.unpauseContainerCmd(container.getContainerId).exec()).unit
+    // Ends the outage however `effect` exits, so a failed test does not leave the container frozen for the next one
+    def during[R, A](effect: RIO[R, A]): RIO[R, A] = ZIO.acquireReleaseWith(begin)(_ => end.orDie)(_ => effect)
+
+  // The same infrastructure as above, each with the means to take it down
+  final case class PostgresOutage(outage: Outage)
+  final case class RedisOutage(outage: Outage)
+  final case class KafkaOutage(outage: Outage)
+
+  val postgresWithOutage: ZLayer[Any, Throwable, PostgresConfig & PostgresOutage] =
+    ZLayer.scopedEnvironment(
+      started(PostgreSQLContainer(PostgisImage)).map(c =>
+        ZEnvironment(PostgresConfig(c.getJdbcUrl, c.getUsername, c.getPassword, maxPool = 4), PostgresOutage(Outage(c)))
+      )
+    )
+
+  val redisWithOutage: ZLayer[Any, Throwable, RedisConfig & RedisOutage] =
+    ZLayer.scopedEnvironment(
+      started(RedisContainer().withExposedPorts(6379)).map(c =>
+        ZEnvironment(RedisConfig(c.getHost, c.getMappedPort(6379)), RedisOutage(Outage(c)))
+      )
+    )
+
+  val kafkaWithOutage: ZLayer[Any, Throwable, KafkaConfig & KafkaOutage] =
+    ZLayer.scopedEnvironment(
+      for
+        c  <- started(KafkaContainer("apache/kafka:4.3.0").withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "false"))
+        cfg = TestKafka.config(servers = c.getBootstrapServers, group = "mep-it-outage")
+        _  <- untilReachable(cfg)
+      yield ZEnvironment(cfg, KafkaOutage(Outage(c)))
     )
 
   // On CI the mapped port can refuse connections for a moment after the container reports it started. zio-kafka

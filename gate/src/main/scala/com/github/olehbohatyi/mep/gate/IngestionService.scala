@@ -12,7 +12,10 @@ import com.github.olehbohatyi.mep.domain.*
 
 enum IngestionResult:
   case Accepted(id: UUID)
+  // The key's event was published before
   case Duplicate(id: UUID)
+  // Another request with the same key is still publishing, or just failed to: the client should retry
+  case InProgress(id: UUID)
 
 trait IngestionService:
   // With an Idempotency-Key, retries of the same request map to the same event id and are published once
@@ -23,6 +26,14 @@ object IngestionService:
   val Namespace = "mep:gate:idem"
 
   private val IdempotencyTtl = 24.hours
+
+  // A key is `Pending` while its event is being published and `IdempotencyCache.Marked` once it was. A retry that
+  // finds it pending is not told the event was published: the first attempt may still fail. Pending expires after a
+  // publish could have taken (twice the delivery timeout), so a gate that dies mid-publish blocks the key that long,
+  // not for a day.
+  val Pending = "pending"
+
+  private def pendingTtl(kafka: KafkaConfig): Duration = kafka.deliveryTimeout * 2 + 30.seconds
 
   def eventId(idempotencyKey: String): UUID =
     UUID.nameUUIDFromBytes(s"mep-gate:$idempotencyKey".getBytes(UTF_8))
@@ -41,10 +52,20 @@ object IngestionService:
         case None      => Random.nextUUID.flatMap(publish(_, request))
         case Some(key) =>
           val id = eventId(key)
-          cache.tryMark(key, IdempotencyTtl).flatMap {
-            case false => ZIO.succeed(IngestionResult.Duplicate(id))
-            // Release the key if publishing fails so the client can retry
-            case true  => publish(id, request).onError(_ => cache.unmark(key).ignoreLogged)
+          cache.tryMark(key, pendingTtl(kafka), Pending).flatMap {
+            case true  =>
+              publish(id, request)
+                // Release the key if publishing fails so the client can retry
+                .onError(_ => cache.unmark(key).ignoreLogged)
+                // If this fails the key stays pending until it expires; a retry after that publishes the same id
+                // again, which the pipe drops as a duplicate
+                .tap(_ => cache.mark(key, IdempotencyTtl).ignoreLogged)
+            case false =>
+              cache.get(key).map {
+                // None: the first attempt failed and released the key in between
+                case Some(Pending) | None => IngestionResult.InProgress(id)
+                case Some(_)              => IngestionResult.Duplicate(id)
+              }
           }
 
     private def publish(id: UUID, request: EventRequest): Task[IngestionResult] =
