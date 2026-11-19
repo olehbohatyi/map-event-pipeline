@@ -19,7 +19,7 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 |---|---|
 | **Stack** | Scala 3, ZIO 2, zio-http, zio-kafka, Quill, Kafka / Redpanda, PostgreSQL + PostGIS, Redis, Spark 4, OpenTelemetry (Tempo, Prometheus, Loki, Grafana), Gatling, Docker, Helm |
 | **Performance** | CI baseline load test: 4,730 requests, 0 failed; `POST /api/v1/events` p95 18 ms; event posted → stored in Postgres p95 294 ms ([load testing](#load-testing-gatling)) |
-| **Tests** | 126 tests, 29 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
+| **Tests** | 127 tests, 30 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
 | **Process** | 26 pull requests, each green in CI before merge; every phase began with a spike whose findings are in [docs/decisions.md](docs/decisions.md) |
 
 ## Highlights
