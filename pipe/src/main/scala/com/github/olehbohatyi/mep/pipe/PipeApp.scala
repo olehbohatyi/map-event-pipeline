@@ -3,11 +3,9 @@ package com.github.olehbohatyi.mep.pipe
 import zio.*
 import zio.kafka.consumer.Consumer
 
-import javax.sql.DataSource
-
 import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RedisService }
-import com.github.olehbohatyi.mep.config.{ AppConfig, KafkaConfig }
+import com.github.olehbohatyi.mep.config.{ AppConfig, KafkaConfig, PostgresConfig }
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, RegionRepo }
 import com.github.olehbohatyi.mep.telemetry.Telemetry
@@ -41,6 +39,6 @@ object PipeApp extends ZIOApp:
       StreamProcessor.live,
     )
 
-  private val program: RIO[StreamProcessor & DataSource & KafkaConfig, Unit] =
+  private val program: RIO[StreamProcessor & PostgresConfig & KafkaConfig, Unit] =
     Migrations.run *> TopicBootstrap.run *> ZIO.logInfo("Pipe started") *>
       ZIO.serviceWithZIO[StreamProcessor](_.run)
