@@ -29,10 +29,14 @@ final case class TopicSettings(
       Option.when(dlqRetentionHours < 1)(s"dlq-retention-hours must be at least 1 (got $dlqRetentionHours)"),
     ).flatten
 
+/** `deliveryTimeout` bounds a publish: how long the producer waits for the broker before the send fails. Kafka's
+  * default (2 minutes, after up to 1 minute blocked on metadata) outlasted any client waiting for the gate.
+  */
 final case class KafkaConfig(
     bootstrapServers: String,
     consumerGroup: String,
     topics: TopicsConfig,
     topicSettings: TopicSettings,
+    deliveryTimeout: zio.Duration = zio.Duration.fromSeconds(10),
   ):
   def servers: List[String] = bootstrapServers.split(',').map(_.trim).filter(_.nonEmpty).toList

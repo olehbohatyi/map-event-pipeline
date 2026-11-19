@@ -24,6 +24,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
       idempotencyKey match
         case Some("dup")  => ZIO.succeed(IngestionResult.Duplicate(fixedId))
         case Some("boom") => ZIO.fail(RuntimeException("kafka down"))
+        case Some("busy") => ZIO.succeed(IngestionResult.InProgress(fixedId))
         case _            => ZIO.succeed(IngestionResult.Accepted(fixedId))
 
   final class StubQuery(calls: Ref[List[(GeoPoint, Double, Int)]]) extends QueryService:
@@ -78,6 +79,18 @@ object GateRoutesSpec extends ZIOSpecDefault:
       val req =
         Request.post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody)).addHeader("Idempotency-Key", "dup")
       call(req).map((s, b) => assertTrue(s == Status.Ok, b.contains("\"status\":\"duplicate\"")))
+    },
+    test("tells a retry of a request still in progress to retry, with 409") {
+      val req =
+        Request
+          .post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody))
+          .addHeader("Idempotency-Key", "busy")
+      call(req).map((s, b) =>
+        assertTrue(
+          s == Status.Conflict,
+          b == "{\"error\":\"a request with this Idempotency-Key is still being processed; retry it\"}",
+        )
+      )
     },
     test("rejects an invalid body with 400 and well-formed JSON") {
       call(Request.post(URL(Path.decode("/api/v1/events")), Body.fromString("""{"eventType":"Meteor"}""")))

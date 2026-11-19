@@ -12,6 +12,17 @@
         ],
         "type" : "object"
       },
+      "Conflict" : {
+        "properties" : {
+          "error" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "error"
+        ],
+        "type" : "object"
+      },
       "EventRequest" : {
         "properties" : {
           "description" : {
@@ -445,6 +456,17 @@
                 }
               }
             }
+          },
+          "409" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Conflict",
+                  "description" : "Another request with this Idempotency-Key is still being published, or has just failed to be. Nothing is known to be published yet: retry the request.\n\n"
+                }
+              }
+            },
+            "description" : "Another request with this Idempotency-Key is still being published, or has just failed to be. Nothing is known to be published yet: retry the request.\n\n"
           },
           "429" : {
             "content" : {

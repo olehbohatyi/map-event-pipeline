@@ -28,9 +28,18 @@ object ProducerService:
       for
         cfg      <- ZIO.service[KafkaConfig]
         tracing  <- ZIO.service[Tracing]
-        producer <- Producer.make(ProducerSettings(cfg.servers))
+        producer <- Producer.make(settings(cfg))
       yield ProducerServiceLive(producer, tracing)
     }
+
+  // A send fails after deliveryTimeout, blocked on metadata or waiting for acks; Kafka requires the request timeout to
+  // fit in it (delivery.timeout.ms >= linger.ms + request.timeout.ms)
+  private[broker] def settings(cfg: KafkaConfig): ProducerSettings =
+    val delivery = cfg.deliveryTimeout.toMillis
+    ProducerSettings(cfg.servers)
+      .withProperty("delivery.timeout.ms", delivery.toString)
+      .withProperty("request.timeout.ms", (delivery / 2).toString)
+      .withProperty("max.block.ms", delivery.toString)
 
   final private class ProducerServiceLive(producer: Producer, tracing: Tracing) extends ProducerService:
 

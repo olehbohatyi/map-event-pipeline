@@ -153,19 +153,19 @@ object GateRoutes:
     notInTheFuture(req) *>
       ingestion
         .ingest(req, idempotencyKey.map(_.trim).filter(_.nonEmpty))
-        .tap {
-          case IngestionResult.Accepted(_)  => GateMetrics.ingest(req, "accepted")
-          case IngestionResult.Duplicate(_) => GateMetrics.ingest(req, "duplicate")
-        }
-        .mapBoth(
-          err => err,
-          {
-            case IngestionResult.Accepted(id)  => Right(IngestAccepted(id, "accepted"))
-            case IngestionResult.Duplicate(id) => Left(IngestDuplicate(id, "duplicate"))
-          },
-        )
         .tapError(err => internal("ingest")(err).unit)
         .mapError(_ => ApiError.Internal("internal"))
+        .tap {
+          case IngestionResult.Accepted(_)   => GateMetrics.ingest(req, "accepted")
+          case IngestionResult.Duplicate(_)  => GateMetrics.ingest(req, "duplicate")
+          case IngestionResult.InProgress(_) => GateMetrics.ingest(req, "in_progress")
+        }
+        .flatMap {
+          case IngestionResult.Accepted(id)  => ZIO.succeed(Right(IngestAccepted(id, "accepted")))
+          case IngestionResult.Duplicate(id) => ZIO.succeed(Left(IngestDuplicate(id, "duplicate")))
+          case IngestionResult.InProgress(_) =>
+            ZIO.fail(ApiError.Conflict("a request with this Idempotency-Key is still being processed; retry it"))
+        }
 
   // occurredAt is client input. A far-future one would sort first in /recent for good and never age off the map
   private def notInTheFuture(req: EventRequest): IO[ApiError.BadRequest, Unit] =

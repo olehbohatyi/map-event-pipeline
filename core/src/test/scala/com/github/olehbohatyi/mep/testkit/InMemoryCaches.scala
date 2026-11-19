@@ -7,15 +7,18 @@ import com.github.olehbohatyi.mep.domain.GeoPoint
 
 // In-memory cache doubles for unit tests (TTLs are ignored)
 
-final class InMemoryIdempotencyCache(keys: Ref[Set[String]]) extends IdempotencyCache:
-  def tryMark(key: String, ttl: Duration): Task[Boolean] = keys.modify(s => (!s(key), s + key))
-  def isMarked(key: String): Task[Boolean]               = keys.get.map(_(key))
-  def mark(key: String, ttl: Duration): Task[Unit]       = keys.update(_ + key)
-  def unmark(key: String): Task[Unit]                    = keys.update(_ - key)
-  def all: UIO[Set[String]]                              = keys.get
+final class InMemoryIdempotencyCache(keys: Ref[Map[String, String]]) extends IdempotencyCache:
+  def tryMark(key: String, ttl: Duration, value: String): Task[Boolean] =
+    keys.modify(m => if m.contains(key) then (false, m) else (true, m + (key -> value)))
+  def get(key: String): Task[Option[String]]                            = keys.get.map(_.get(key))
+  def isMarked(key: String): Task[Boolean]                              = keys.get.map(_.contains(key))
+  def mark(key: String, ttl: Duration): Task[Unit]                      = keys.update(_ + (key -> IdempotencyCache.Marked))
+  def unmark(key: String): Task[Unit]                                   = keys.update(_ - key)
+  def all: UIO[Set[String]]                                             = keys.get.map(_.keySet)
 
 object InMemoryIdempotencyCache:
-  val layer: ULayer[InMemoryIdempotencyCache] = ZLayer(Ref.make(Set.empty[String]).map(InMemoryIdempotencyCache(_)))
+  val layer: ULayer[InMemoryIdempotencyCache] =
+    ZLayer(Ref.make(Map.empty[String, String]).map(InMemoryIdempotencyCache(_)))
 
 final class InMemoryGeoCache(entries: Ref[Map[String, String]]) extends GeoCache:
   def get(point: GeoPoint): Task[Option[String]]                      = entries.get.map(_.get(GeoCache.key(point)))
