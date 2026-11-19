@@ -4,11 +4,9 @@ import zio.*
 import zio.http.*
 import zio.telemetry.opentelemetry.tracing.Tracing
 
-import javax.sql.DataSource
-
 import com.github.olehbohatyi.mep.broker.{ ProducerService, TopicBootstrap }
 import com.github.olehbohatyi.mep.caches.{ GeoCache, IdempotencyCache, RateLimiter, RedisService }
-import com.github.olehbohatyi.mep.config.{ AppConfig, HttpConfig, KafkaConfig }
+import com.github.olehbohatyi.mep.config.{ AppConfig, HttpConfig, KafkaConfig, PostgresConfig }
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.stores.{ DataSourceLayer, EventRepo, Migrations, RegionRepo, StatsRepo, TrendsRepo }
 import com.github.olehbohatyi.mep.telemetry.Telemetry
@@ -42,7 +40,7 @@ object GateApp extends ZIOApp:
     )
 
   private val program: RIO[
-    IngestionService & QueryService & LiveFeed & RateLimiter & Tracing & HttpConfig & KafkaConfig & DataSource,
+    IngestionService & QueryService & LiveFeed & RateLimiter & Tracing & HttpConfig & KafkaConfig & PostgresConfig,
     Unit,
   ] =
     for

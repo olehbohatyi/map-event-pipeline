@@ -92,7 +92,8 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   committed. Keep inserts idempotent (`onConflictIgnore`).
 - Every call to Postgres, Redis and Kafka is bounded (`PostgresConfig` connect/socket timeouts,
   `RedisService.CommandTimeout` via `.bounded`, `KafkaConfig.deliveryTimeout`): retries only help if a frozen
-  dependency fails the call. New Redis commands go through `.bounded`. A gate idempotency key holds
+  dependency fails the call. New Redis commands go through `.bounded`. Flyway (`Migrations`) opens its own
+  connection from `PostgresConfig`, not the pool, so a long migration step is not cut off by the socket timeout. A gate idempotency key holds
   `IngestionService.Pending` until its event is published (`409` to a retry meanwhile, never `200 duplicate`); keys
   from older gates hold `"1"` and count as published. `it/OutageSpec` freezes containers with `docker pause`
   (`Containers.*WithOutage`); stopping them would lose the mapped ports.
