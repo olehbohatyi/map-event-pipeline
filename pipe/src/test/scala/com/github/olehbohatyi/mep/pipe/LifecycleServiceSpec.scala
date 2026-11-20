@@ -1,12 +1,15 @@
 package com.github.olehbohatyi.mep.pipe
 
 import zio.*
+import zio.concurrent.CountdownLatch
 import zio.test.*
 
 import java.time.Instant
 import java.util.UUID
 
+import com.github.olehbohatyi.mep.broker.ProducerService
 import com.github.olehbohatyi.mep.domain.*
+import com.github.olehbohatyi.mep.stores.EventRepo
 import com.github.olehbohatyi.mep.testkit.*
 
 object LifecycleServiceSpec extends ZIOSpecDefault:
@@ -108,6 +111,31 @@ object LifecycleServiceSpec extends ZIOSpecDefault:
         after.exists(_.status == EventStatus.Expired),
         sent.map((topic, e) => topic -> e.status) == Chunk("closed" -> EventStatus.Expired),
       )
+    },
+    // One event at a time, each waiting for the broker and Postgres, a backlog after downtime took minutes
+    test("expires the events of a batch concurrently") {
+      for
+        _       <- TestClock.setTime(now)
+        _       <- ZIO.foreachDiscard(1 to LifecycleService.Parallelism)(_ => stored(received(EventType.Traffic, 3.hours)))
+        // Each publish waits until every event of the batch is being published: one at a time, the first never returns
+        latch   <- CountdownLatch.make(LifecycleService.Parallelism)
+        repo    <- ZIO.service[InMemoryEventRepo]
+        kafka    = TestKafka.config()
+        producer = new ProducerService:
+                     def publish(topic: String, event: MapEvent): Task[Unit] = latch.countDown *> latch.await
+                     def publishRaw(topic: String, key: Option[String], value: String, headers: Map[String, String])
+                         : Task[Unit]                                        = ZIO.unit
+        expire   = ZIO
+                     .serviceWithZIO[LifecycleService](_.expireDue)
+                     .provide(
+                       ZLayer.succeed[EventRepo](repo),
+                       ZLayer.succeed[ProducerService](producer),
+                       ZLayer.succeed(kafka),
+                       ZLayer.succeed(TestLifecycle.config),
+                       LifecycleService.live,
+                     )
+        expired <- Live.withLive(expire)(_.timeoutFail("expired one event at a time")(10.seconds))
+      yield assertTrue(expired == LifecycleService.Parallelism)
     },
     test("works through a backlog larger than one batch") {
       val backlog = List.fill(LifecycleService.Batch + 3)(received(EventType.Sign, 31.days))
