@@ -10,6 +10,7 @@ final case class AppConfig(
     kafka: KafkaConfig,
     postgres: PostgresConfig,
     redis: RedisConfig,
+    lifecycle: LifecycleConfig,
   )
 
 object AppConfig:
@@ -21,10 +22,11 @@ object AppConfig:
     ZLayer.fromZIO(TypesafeConfigProvider.fromResourcePath().load(descriptor))
 
   // Narrow sub-layers so services depend only on what they use
-  val http: URLayer[AppConfig, HttpConfig]         = ZLayer.fromFunction((c: AppConfig) => c.http)
-  val kafka: URLayer[AppConfig, KafkaConfig]       = ZLayer.fromFunction((c: AppConfig) => c.kafka)
-  val postgres: URLayer[AppConfig, PostgresConfig] = ZLayer.fromFunction((c: AppConfig) => c.postgres)
-  val redis: URLayer[AppConfig, RedisConfig]       = ZLayer.fromFunction((c: AppConfig) => c.redis)
+  val http: URLayer[AppConfig, HttpConfig]           = ZLayer.fromFunction((c: AppConfig) => c.http)
+  val kafka: URLayer[AppConfig, KafkaConfig]         = ZLayer.fromFunction((c: AppConfig) => c.kafka)
+  val postgres: URLayer[AppConfig, PostgresConfig]   = ZLayer.fromFunction((c: AppConfig) => c.postgres)
+  val redis: URLayer[AppConfig, RedisConfig]         = ZLayer.fromFunction((c: AppConfig) => c.redis)
+  val lifecycle: URLayer[AppConfig, LifecycleConfig] = ZLayer.fromFunction((c: AppConfig) => c.lifecycle)
 
-  val all: ZLayer[Any, Config.Error, HttpConfig & KafkaConfig & PostgresConfig & RedisConfig] =
-    live >>> (http ++ kafka ++ postgres ++ redis)
+  val all: ZLayer[Any, Config.Error, HttpConfig & KafkaConfig & PostgresConfig & RedisConfig & LifecycleConfig] =
+    live >>> (http ++ kafka ++ postgres ++ redis ++ lifecycle)

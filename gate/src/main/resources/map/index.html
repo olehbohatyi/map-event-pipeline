@@ -20,6 +20,7 @@
     .legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 4px 0 8px; }
     .popup b { display: block; }
     .popup small { color: #555; }
+    .popup button { margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -57,6 +58,9 @@
 
   // Markers by event id: the stream may deliver an event twice, and an event from the initial load may arrive again
   const markers = new Map();
+  // Events seen resolved or expired. A closed event never opens again, but its open version may still arrive late
+  // (another topic, or an older /recent response), so it must not bring the marker back.
+  const closed = new Set();
 
   // Built with textContent, never innerHTML: description is user input
   function popup(e) {
@@ -75,7 +79,30 @@
     const when = document.createElement("small");
     when.textContent = new Date(e.occurredAt).toLocaleString();
     div.append(when);
+    const resolve = document.createElement("button");
+    resolve.textContent = "Resolve";
+    resolve.onclick = () => {
+      resolve.disabled = true;
+      fetch(`/api/v1/events/${encodeURIComponent(e.id)}/resolve`, { method: "POST" })
+        // The marker goes once the pipe has closed the event and the stream delivers it
+        .then(r => { resolve.textContent = r.status === 202 ? "Resolving…" : `Failed (${r.status})`; })
+        .catch(() => { resolve.textContent = "Failed"; resolve.disabled = false; });
+    };
+    div.append(document.createElement("br"), resolve);
     return div;
+  }
+
+  function remove(id) {
+    const marker = markers.get(id);
+    if (marker) marker.remove();
+    markers.delete(id);
+    document.getElementById("count").textContent = `${markers.size} events`;
+  }
+
+  // Every event from the stream or /recent goes through here
+  function receive(e, fresh) {
+    if (e.status === "Resolved" || e.status === "Expired") { closed.add(e.id); remove(e.id); }
+    else if (!closed.has(e.id)) show(e, fresh);
   }
 
   function show(e, fresh) {
@@ -110,7 +137,7 @@
   function loadRecent() {
     fetch("/api/v1/events/recent?limit=200")
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
-      .then(body => body.events.reverse().forEach(e => { if (!markers.has(e.id)) show(e, false); }))
+      .then(body => body.events.reverse().forEach(e => { if (!markers.has(e.id)) receive(e, false); }))
       .catch(err => console.warn("loading recent events failed", err));
   }
 
@@ -120,7 +147,7 @@
   source.onopen = () => { status("live", "live"); loadRecent(); };
   // EventSource reconnects by itself, e.g. after a gate restart
   source.onerror = () => status("reconnecting…", "down");
-  source.addEventListener("event", msg => show(JSON.parse(msg.data), true));
+  source.addEventListener("event", msg => receive(JSON.parse(msg.data), true));
 </script>
 </body>
 </html>

@@ -34,6 +34,7 @@ object RateLimitSpec extends ZIOSpecDefault:
       calls    <- Ref.make(List.empty[(GeoPoint, Double, Int)])
       routes    = GateRoutes(
                     CountingIngestion(ingested),
+                    GateRoutesSpec.StubResolution,
                     GateRoutesSpec.StubQuery(calls),
                     GateRoutesSpec.NoFeed,
                     limiter,
@@ -69,18 +70,21 @@ object RateLimitSpec extends ZIOSpecDefault:
         limited1 - limited0 >= 1L,
       )
     },
-    test("only event submissions are limited") {
+    test("only event submissions and resolve requests are limited, on one counter") {
+      val resolve = Request.post(URL(Path.decode(s"/api/v1/events/${GateRoutesSpec.fixedId}/resolve")), Body.empty)
       for
-        g      <- gate(limit = 0)
-        post   <- g.post("10.0.0.1")
-        health <- g.send(Request.get(URL(Path.decode("/api/v1/health"))), "10.0.0.1")
-        recent <- g.send(Request.get(URL(Path.decode("/api/v1/events/recent"))), "10.0.0.1")
-        seen   <- g.limiter.seen
+        g       <- gate(limit = 1)
+        post    <- g.post("10.0.0.1")
+        refused <- g.send(resolve, "10.0.0.1")
+        health  <- g.send(Request.get(URL(Path.decode("/api/v1/health"))), "10.0.0.1")
+        recent  <- g.send(Request.get(URL(Path.decode("/api/v1/events/recent"))), "10.0.0.1")
+        seen    <- g.limiter.seen
       yield assertTrue(
-        post.status == Status.TooManyRequests,
+        post.status == Status.Accepted,
+        refused.status == Status.TooManyRequests,
         health.status == Status.Ok,
         recent.status == Status.Ok,
-        seen == Map("10.0.0.1" -> 1),
+        seen == Map("10.0.0.1" -> 2),
       )
     },
     test("lets requests through when the limiter fails, rather than refusing every event") {

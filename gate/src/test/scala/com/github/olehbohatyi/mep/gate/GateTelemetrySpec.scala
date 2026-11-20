@@ -35,6 +35,7 @@ object GateTelemetrySpec extends ZIOSpecDefault:
           val routes =
             GateRoutes(
               GateRoutesSpec.StubIngestion,
+              GateRoutesSpec.StubResolution,
               GateRoutesSpec.StubQuery(calls),
               GateRoutesSpec.NoFeed,
               RateLimiter.unlimited,

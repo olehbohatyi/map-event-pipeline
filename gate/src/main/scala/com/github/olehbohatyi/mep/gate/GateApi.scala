@@ -79,13 +79,34 @@ object GateApi:
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
 
+  val resolve =
+    Endpoint(Method.POST / "api" / "v1" / "events" / PathCodec.uuid("id") / "resolve")
+      .out[ResolveAccepted](
+        Status.Accepted,
+        Doc.p(
+          "The request was published; the pipe marks the event `Resolved` shortly. It then leaves the nearby and recent " +
+            "lists and the live map, which receives it once more with its new status."
+        ),
+      )
+      .invalidRequestAsJson
+      .outErrors[ApiError](
+        HttpCodec.error[ApiError.NotFound](Status.NotFound) ?? Doc.p("No stored event with this id (yet)."),
+        HttpCodec.error[ApiError.Conflict](Status.Conflict) ?? Doc
+          .p("The event is closed already: resolved or expired."),
+        // Answered by GateRoutes.limited before the request is read; declared here for the document
+        HttpCodec.error[ApiError.TooManyRequests](Status.TooManyRequests) ?? Doc.p(
+          "Too many submissions from this client address in the current window (shared with event submissions)."
+        ),
+        HttpCodec.error[ApiError.Internal](Status.InternalServerError),
+      )
+
   val nearby =
     Endpoint(Method.GET / "api" / "v1" / "events" / "nearby")
       .query(QueryCodec.query[Double]("lat") ?? Doc.p("Latitude of the centre, within [-90, 90]."))
       .query(QueryCodec.query[Double]("lon") ?? Doc.p("Longitude of the centre, within [-180, 180]."))
       .query(QueryCodec.query[Double]("radius").optional ?? Doc.p("Radius in km, within (0, 100]; default 5."))
       .query(QueryCodec.query[Int]("limit").optional ?? Doc.p("Maximum number of events, within [1, 500]; default 50."))
-      .out[NearbyResponse](Doc.p("Events around the point, closest first, and the region the point is in."))
+      .out[NearbyResponse](Doc.p("Open events around the point, closest first, and the region the point is in."))
       .invalidRequestAsJson
       .outErrors[ApiError](
         HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
@@ -95,7 +116,7 @@ object GateApi:
   // A primary-key read: lets a client (or the load test's probe) see when its event has been stored
   val event =
     Endpoint(Method.GET / "api" / "v1" / "events" / PathCodec.uuid("id"))
-      .out[MapEvent](Doc.p("The event, once the pipe has stored it."))
+      .out[MapEvent](Doc.p("The event, once the pipe has stored it, open or closed."))
       .invalidRequestAsJson
       .outErrors[ApiError](
         HttpCodec.error[ApiError.NotFound](Status.NotFound),
@@ -107,7 +128,7 @@ object GateApi:
       .query(
         QueryCodec.query[Int]("limit").optional ?? Doc.p("Maximum number of events, within [1, 500]; default 200.")
       )
-      .out[RecentResponse](Doc.p("The latest events by occurrence time, newest first."))
+      .out[RecentResponse](Doc.p("The latest open events by occurrence time, newest first."))
       .invalidRequestAsJson
       .outErrors[ApiError](
         HttpCodec.error[ApiError.BadRequest](Status.BadRequest),
@@ -122,8 +143,8 @@ object GateApi:
       )
       .outStream[ServerSentEvent[String]](
         Doc.p(
-          "Server-sent events, one per event the pipe finishes: `event: event`, `id: <event id>`, `data: <MapEvent " +
-            "JSON>`. A `:heartbeat` comment every 15 seconds keeps the connection open. Delivery is best effort: a " +
+          "Server-sent events, one per event the pipe finishes or closes: `event: event`, `id: <event id>`, `data: " +
+            "<MapEvent JSON>`. A closed event arrives again with status `Resolved` or `Expired`. A `:heartbeat` comment every 15 seconds keeps the connection open. Delivery is best effort: a " +
             "client that falls far behind loses its oldest events, and the same event may arrive twice."
         )
       )
@@ -155,7 +176,7 @@ object GateApi:
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
 
-  val endpoints = List(health, ingest, nearby, event, recent, live, stats, hourly)
+  val endpoints = List(health, ingest, resolve, nearby, event, recent, live, stats, hourly)
 
   val openApi: OpenAPI =
     val generated = OpenAPIGen.fromEndpoints("Map Event Pipeline API", "1.0.0", endpoints.head, endpoints.tail*)

@@ -19,7 +19,7 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 |---|---|
 | **Stack** | Scala 3, ZIO 2, zio-http, zio-kafka, Quill, Kafka / Redpanda, PostgreSQL + PostGIS, Redis, Spark 4, OpenTelemetry (Tempo, Prometheus, Loki, Grafana), Gatling, Docker, Helm |
 | **Performance** | CI baseline load test: 4,730 requests, 0 failed; `POST /api/v1/events` p95 18 ms; event posted → stored in Postgres p95 294 ms ([load testing](#load-testing-gatling)) |
-| **Tests** | 127 tests, 30 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
+| **Tests** | 145 tests, 34 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
 | **Process** | 26 pull requests, each green in CI before merge; every phase began with a spike whose findings are in [docs/decisions.md](docs/decisions.md) |
 
 ## Highlights
@@ -28,6 +28,9 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
   compiled with `-Werror -Wunused:all`.
 - **Kafka with explicit delivery semantics**: idempotent ingest, offsets committed after handling, a dead-letter
   topic, partitions processed in parallel and in order ([delivery guarantees](#delivery-guarantees)).
+- **Event lifecycle**: events are resolved by clients or expire per type; the change travels through Kafka like
+  every other write, and closing is conditional, so replays and concurrent sweeps close an event once
+  ([event lifecycle](#event-lifecycle)).
 - **PostGIS**: oblast polygons and great-circle queries behind Quill ([regions](#regions-and-geo-queries)).
 - **Spark 4**: a batch job and a Structured Streaming job on Kafka with watermarks, de-duplication and idempotent
   upserts ([hourly trends](#hourly-trends-spark-structured-streaming)).
@@ -53,11 +56,13 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 
 ```
  clients                        browsers: /map (Leaflet) ◀── server-sent events
-    │  POST /api/v1/events            GET /api/v1/events/nearby, /recent, /live, /api/v1/stats
+    │  POST /api/v1/events, /{id}/resolve   GET /api/v1/events/nearby, /recent, /live, /api/v1/stats
     ▼                                   ▲
 ┌──────────┐  map.events.raw   ┌──────────┐   map.events.enriched ──┐
 │   gate   │ ────────────────▶ │   pipe   │ ─▶ map.events.{hazards,signs,traffic}
-│ zio-http │ ◀─────────────────┼──────────┼─────────────────────────┘ (tailed for the live map)
+│ zio-http │ map.events.status │          │   map.events.closed ────┤
+│          │ ────────────────▶ │          │                         │
+│          │ ◀─────────────────┼──────────┼─────────────────────────┘ (tailed for the live map)
 └──────────┘                   └──────────┘
    │    ▲                         │    │
    │    │ map_events              │    └──────▶ PostgreSQL ◀──────┐
@@ -74,9 +79,9 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 | Module | Role |
 |--------|------|
 | `core` | Domain model and JSON codecs, typed config, Postgres/PostGIS stores (Quill, Flyway, Chimney), Kafka producer, Redis caches, region resolution |
-| `gate` | HTTP API (zio-http): ingest events with optional idempotency, query nearby/recent events and region stats, stream finished events to the live map (SSE) |
-| `pipe` | Kafka consumer (zio-kafka): dedup → enrich with the oblast → escalate severity → persist → publish to typed topics |
-| `stat` | Spark jobs: a batch job counts enriched events per region and type into `map_event_stats`; a Structured Streaming job (`TrendsApp`) keeps hourly counts per region and type in `map_event_trends` from `map.events.enriched` |
+| `gate` | HTTP API (zio-http): ingest events with optional idempotency, resolve them, query nearby/recent events and region stats, stream finished and closed events to the live map (SSE) |
+| `pipe` | Kafka consumer (zio-kafka): dedup → enrich with the oblast → escalate severity → persist → publish to typed topics; closes resolved events and expires old ones |
+| `stat` | Spark jobs: a batch job counts stored events (open or closed) per region and type into `map_event_stats`; a Structured Streaming job (`TrendsApp`) keeps hourly counts per region and type in `map_event_trends` from `map.events.enriched` |
 | `it`   | Integration tests against real Postgres, Redis and Kafka (Testcontainers) |
 
 ### Delivery guarantees
@@ -105,6 +110,28 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
   and processed ids are remembered for 48 h under their own Redis keyspace.
 - **Escalation.** A `Low` event becomes `Medium` once its region sees 5 events of the same type within 5 minutes.
 
+### Event lifecycle
+
+An event is *open* (`Raw` as published, `Enriched` once stored) until it is *closed*: `Resolved` by a client or
+`Expired` after its type's lifetime. A closed event never opens again; it leaves `/nearby`, `/recent` and the live map
+but keeps counting in the stats, and `GET /api/v1/events/{id}` still returns it with `closedAt`.
+
+- **Resolve.** `POST /api/v1/events/{id}/resolve` answers `404` for an event that is not stored yet and `409` for one
+  that is closed already. Otherwise the gate publishes the request to `map.events.status`, keyed by the event id, and
+  answers `202`; it never writes Postgres itself. The pipe reads that topic beside `map.events.raw`.
+- **Expire.** Every minute the pipe looks for open events received (`createdAt`, the gate's clock, not the client's
+  `occurredAt`) more than their lifetime ago: hazards 6 hours, traffic 2 hours, signs 30 days (`EVENT_HAZARD_TTL`,
+  `EVENT_TRAFFIC_TTL`, `EVENT_SIGN_TTL`). A pipe that was off works through the backlog 500 at a time. A failed sweep
+  is logged and the next one tries again; the stream is not stopped for it.
+- **Once.** Closing is one conditional `UPDATE` (`… WHERE status IN ('Raw', 'Enriched')`), so the first close wins: a
+  replayed request, a resolve racing an expiry, or two pipes sweeping at once change an event once, and a closed event
+  keeps its first status and time.
+- **Live map.** Every event the pipe closes, or finds closed when asked again, is published to `map.events.closed`,
+  which the gates tail with `map.events.enriched`. Publishing again is harmless (clients key events by id) and covers
+  a pipe that stopped between closing an event and publishing it. If an expired event's publish is lost that way, the
+  marker stays on open pages until they reload.
+- `mep_events_closed_total{status}` counts the events each pipe closed.
+
 ### Topics
 
 Brokers run with topic auto-creation **off**. Both apps run `TopicBootstrap` at startup (zio-kafka `AdminClient`):
@@ -116,6 +143,8 @@ in `application.conf`, and tolerates gate and pipe racing to create the same top
 | `map.events.raw` | gate | accepted events, JSON | 7 days |
 | `map.events.enriched` | pipe | every processed event | 7 days |
 | `map.events.{hazards,signs,traffic}` | pipe | processed events by type | 7 days |
+| `map.events.status` | gate | requests to resolve an event: `{id, status, requestedAt}` | 7 days |
+| `map.events.closed` | pipe | events as they were resolved or expired | 7 days |
 | `map.events.dlq` | pipe | records that could not be decoded, payload unchanged; headers `mep.error`, `mep.source.topic`, `mep.source.partition`, `mep.source.offset`, `mep.failed-at` | 14 days |
 
 All topics are keyed by event id (3 partitions by default; `KAFKA_REPLICATION_FACTOR` overrides the replication
@@ -191,6 +220,9 @@ curl -i -X POST localhost:8080/api/v1/events \
   -d '{"eventType":"Hazard","severity":"Low","location":{"lat":50.4501,"lon":30.5234},"description":"pothole"}'
 
 curl 'localhost:8080/api/v1/events/nearby?lat=50.45&lon=30.52&radius=5&limit=20'
+
+# resolve it (the id is in the POST's answer): it leaves /nearby, /recent and the map
+curl -i -X POST localhost:8080/api/v1/events/<id>/resolve
 
 docker compose run --rm stat              # aggregate into map_event_stats
 curl 'localhost:8080/api/v1/stats?region=Kyiv%20City'
@@ -346,9 +378,11 @@ serves it.
 
 `/map` is a single page (Leaflet over OpenStreetMap tiles) that loads the latest events from `/api/v1/events/recent`
 and then follows `/api/v1/events/live`, a stream of server-sent events. Markers are coloured by severity; the popup
-shows type, region, description and time.
+shows type, region, description and time, and a button that resolves the event: its marker goes once the pipe has
+closed it, and so do markers of expired events.
 
-- Each gate tails `map.events.enriched` (what the pipe publishes after storing an event) with its own consumer group
+- Each gate tails `map.events.enriched` (what the pipe publishes after storing an event) and `map.events.closed`
+  (events it resolved or expired) with its own consumer group
   from the newest offset, so every gate instance sees every event and nothing is replayed or committed.
 - One consumer per gate feeds a sliding `Hub`; each browser has its own subscription. A slow or stalled browser loses
   its oldest events instead of slowing Kafka or the other browsers (measured: five clients that never read, 4M events,
@@ -366,10 +400,11 @@ shows type, region, description and time.
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `409` a request with the same key is still in progress (retry it), `400` invalid, `429` over the client's rate limit (with `Retry-After`). |
-| `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Exact great-circle distance, nearest first, plus the region of the query point. |
-| `GET` | `/api/v1/events/{id}` | The event once the pipe has stored it; `404` before that. |
-| `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest events by occurrence time, newest first. |
-| `GET` | `/api/v1/events/live` | Server-sent events (`event: event`, `id`, `data: <MapEvent JSON>`), one per event the pipe finishes, plus a `:heartbeat` comment every 15 s. Optional `bbox=minLon,minLat,maxLon,maxLat`. |
+| `POST` | `/api/v1/events/{id}/resolve` | Asks the pipe to close the event as `Resolved` ([event lifecycle](#event-lifecycle)). `202` requested, `404` not stored (yet), `409` closed already, `429` over the client's rate limit (shared with event submissions). |
+| `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Open events by exact great-circle distance, nearest first, plus the region of the query point. |
+| `GET` | `/api/v1/events/{id}` | The event once the pipe has stored it, open or closed (`status`, `closedAt`); `404` before that. |
+| `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest open events by occurrence time, newest first. |
+| `GET` | `/api/v1/events/live` | Server-sent events (`event: event`, `id`, `data: <MapEvent JSON>`), one per event the pipe finishes or closes (a closed one arrives again with status `Resolved` or `Expired`), plus a `:heartbeat` comment every 15 s. Optional `bbox=minLon,minLat,maxLon,maxLat`. |
 | `GET` | `/api/v1/stats` | Optional `region`. |
 | `GET` | `/api/v1/stats/hourly` | Optional `region`, `hours` (default 24, max 168, the current hour included). Hourly counts from the streaming job, oldest first; hours without events are absent. |
 | `GET` | `/api/v1/health` | Liveness. |

@@ -19,6 +19,7 @@ import com.github.olehbohatyi.mep.domain.{ GeoPoint, MapEvent }
 object GateRoutes:
 
   // POST /api/v1/events        — ingest a road event (optional Idempotency-Key header)
+  // POST /api/v1/events/{id}/resolve — ask the pipe to close a stored, open event
   // GET  /api/v1/events/nearby — events around lat/lon within radius (km)
   // GET  /api/v1/events/recent — the latest events, newest first
   // GET  /api/v1/events/live   — server-sent events as the pipe finishes them, optionally within ?bbox=
@@ -41,13 +42,14 @@ object GateRoutes:
 
   def apply(
       ingestion: IngestionService,
+      resolution: ResolutionService,
       query: QueryService,
       feed: LiveFeed,
       limiter: RateLimiter,
       tracing: Tracing,
     ): Routes[Any, Nothing] =
     val known =
-      api(ingestion, query, feed, limiter) ++
+      api(ingestion, resolution, query, feed, limiter) ++
         SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
         Routes(Method.GET / "map" -> mapPage)
     Routes.fromIterable(known.routes.map(route => observed(tracing, route.routePattern.pathCodec.render)(route))) ++
@@ -92,11 +94,17 @@ object GateRoutes:
     Handler.fromResource("map/index.html").orDie.map(_.addHeader(Header.CacheControl.NoStore))
 
   // The API routes alone, without the docs and the map page
-  def api(ingestion: IngestionService, query: QueryService, feed: LiveFeed, limiter: RateLimiter)
-      : Routes[Any, Nothing] =
+  def api(
+      ingestion: IngestionService,
+      resolution: ResolutionService,
+      query: QueryService,
+      feed: LiveFeed,
+      limiter: RateLimiter,
+    ): Routes[Any, Nothing] =
     Routes(
       GateApi.health.implement(_ => ZIO.succeed("OK")),
       limited(limiter)(GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key))),
+      limited(limiter)(GateApi.resolve.implement(id => resolveEvent(resolution, id))),
       GateApi.nearby.implement((lat, lon, radius, limit) => getNearby(query, lat, lon, radius, limit)),
       GateApi.event.implement(id => getEvent(query, id)),
       GateApi.recent.implement(limit => getRecent(query, limit)),
@@ -105,10 +113,11 @@ object GateRoutes:
       GateApi.hourly.implement((region, hours) => getHourly(query, region, hours)),
     ).transform(_.contramap[Request](readBodyAsJson))
 
-  /** Event submissions are limited per client address, before the body is read. The address is the connection's: behind
-    * a proxy every client shares the proxy's, so the limit then belongs in the proxy. If Redis fails, the request goes
-    * through (and is counted as `unavailable`): a missing limit is better than a gate that accepts nothing. So does a
-    * Redis that does not answer within `LimiterTimeout`; without it a hanging Redis would hang every submission.
+  /** Event submissions and resolve requests are limited per client address (one counter for both), before the body is
+    * read. The address is the connection's: behind a proxy every client shares the proxy's, so the limit then belongs
+    * in the proxy. If Redis fails, the request goes through (and is counted as `unavailable`): a missing limit is
+    * better than a gate that accepts nothing. So does a Redis that does not answer within `LimiterTimeout`; without it
+    * a hanging Redis would hang every submission.
     */
   private def limited(limiter: RateLimiter)(route: Route[Any, Nothing]): Route[Any, Nothing] =
     route.transform { handle =>
@@ -166,6 +175,13 @@ object GateRoutes:
           case IngestionResult.InProgress(_) =>
             ZIO.fail(ApiError.Conflict("a request with this Idempotency-Key is still being processed; retry it"))
         }
+
+  private def resolveEvent(resolution: ResolutionService, id: java.util.UUID): IO[ApiError, ResolveAccepted] =
+    resolution.resolve(id).catchAll(internalFail("resolve")).flatMap {
+      case ResolveResult.Requested(_)             => ZIO.succeed(ResolveAccepted(id, "resolving"))
+      case ResolveResult.NotFound(_)              => ZIO.fail(ApiError.NotFound(s"no stored event $id"))
+      case ResolveResult.AlreadyClosed(_, status) => ZIO.fail(ApiError.Conflict(s"event $id is already $status"))
+    }
 
   // occurredAt is client input. A far-future one would sort first in /recent for good and never age off the map
   private def notInTheFuture(req: EventRequest): IO[ApiError.BadRequest, Unit] =

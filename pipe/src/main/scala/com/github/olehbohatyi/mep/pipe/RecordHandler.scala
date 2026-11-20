@@ -35,17 +35,19 @@ object RecordHandler:
   // fails without committing, so the record is redelivered after restart
   val defaultRetry: Schedule[Any, Any, Any] = Schedule.exponential(200.millis) && Schedule.recurs(5)
 
-  val live: URLayer[KafkaConfig & ProducerService & EventHandler & Tracing, RecordHandler] = withRetry(defaultRetry)
+  val live: URLayer[KafkaConfig & ProducerService & EventHandler & LifecycleService & Tracing, RecordHandler] =
+    withRetry(defaultRetry)
 
   def withRetry(
       retry: Schedule[Any, Any, Any]
-    ): URLayer[KafkaConfig & ProducerService & EventHandler & Tracing, RecordHandler] =
-    ZLayer.fromFunction(RecordHandlerLive(_, _, _, _, retry))
+    ): URLayer[KafkaConfig & ProducerService & EventHandler & LifecycleService & Tracing, RecordHandler] =
+    ZLayer.fromFunction(RecordHandlerLive(_, _, _, _, _, retry))
 
   final private class RecordHandlerLive(
       kafka: KafkaConfig,
       producer: ProducerService,
       handler: EventHandler,
+      lifecycle: LifecycleService,
       tracing: Tracing,
       retry: Schedule[Any, Any, Any],
     ) extends RecordHandler:
@@ -64,6 +66,28 @@ object RecordHandler:
       )(process(record))
 
     private def process(record: RawRecord): Task[Unit] =
+      if record.topic == kafka.topics.status then changeStatus(record) else processEvent(record)
+
+    // A close request from the gate: the event exists (the gate checked), so a failure here is transient
+    private def changeStatus(record: RawRecord): Task[Unit] =
+      EventCodec.decodeChange(record.value) match
+        case Left(err)     => deadLetter(record, err)
+        case Right(change) =>
+          tracing.setAttribute("mep.event.id", change.id.toString) *>
+            lifecycle
+              .apply(change)
+              .tapError(err => ZIO.logWarning(s"Closing event ${change.id} failed, retrying: ${err.getMessage}"))
+              .retry(retry)
+              .flatMap {
+                case CloseOutcome.Closed(status)        =>
+                  PipeMetrics.closed(status, 1) *> ZIO.logInfo(s"Event ${change.id} is now $status")
+                case CloseOutcome.AlreadyClosed(status) =>
+                  ZIO.logInfo(s"Event ${change.id} was already $status; left as it is")
+                case CloseOutcome.Ignored(reason)       =>
+                  ZIO.logWarning(s"Status change for event ${change.id} ignored: $reason")
+              }
+
+    private def processEvent(record: RawRecord): Task[Unit] =
       EventCodec.decode(record.value) match
         // A malformed record would never succeed; park it on the DLQ instead of blocking the partition
         case Left(err)    => deadLetter(record, err)

@@ -35,10 +35,12 @@ object PipeApp extends ZIOApp:
       EnrichmentService.live,
       EscalationService.live,
       EventHandler.live,
+      LifecycleService.live,
       RecordHandler.live,
       StreamProcessor.live,
     )
 
-  private val program: RIO[StreamProcessor & PostgresConfig & KafkaConfig, Unit] =
+  // The expiry sweep runs beside the stream and stops with it
+  private val program: RIO[StreamProcessor & LifecycleService & PostgresConfig & KafkaConfig, Unit] =
     Migrations.run *> TopicBootstrap.run *> ZIO.logInfo("Pipe started") *>
-      ZIO.serviceWithZIO[StreamProcessor](_.run)
+      (ZIO.serviceWithZIO[StreamProcessor](_.run) <& ZIO.serviceWithZIO[LifecycleService](_.sweep))

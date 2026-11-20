@@ -60,9 +60,10 @@ object LiveFeed:
       _     <- ZIO.addFinalizer(hub.shutdown)
     yield LiveFeedLive(hub, count)
 
-  /** Tails the enriched topic. Every gate instance uses its own consumer group and starts at the newest offset, so each
-    * instance sees every event and none replays history; nothing is committed. The pipe may publish an event twice
-    * after a retry, so listeners key events by id.
+  /** Tails the enriched and the closed topic: new events, and events again once they are resolved or expired. Every
+    * gate instance uses its own consumer group and starts at the newest offset, so each instance sees every event and
+    * none replays history; nothing is committed. The pipe may publish an event twice after a retry, so listeners key
+    * events by id.
     */
   val live: RLayer[KafkaConfig, LiveFeed] =
     ZLayer.scoped {
@@ -75,11 +76,12 @@ object LiveFeed:
                         .withOffsetRetrieval(Consumer.OffsetRetrieval.Auto(Consumer.AutoOffsetStrategy.Latest))
                     )
         source    = consumer
-                      .plainStream(Subscription.topics(cfg.topics.enriched), Serde.string, Serde.string)
+                      .plainStream(Subscription.topics(cfg.topics.enriched, cfg.topics.closed), Serde.string, Serde.string)
                       .mapZIO(record =>
                         EventCodec.decode(record.value) match
                           case Right(event) => ZIO.some(event)
-                          case Left(err)    => ZIO.logWarning(s"skipping unreadable enriched record: $err").as(None)
+                          case Left(err)    =>
+                            ZIO.logWarning(s"skipping unreadable ${record.record.topic} record: $err").as(None)
                       )
                       .collectSome
         feed     <- fromSource(source)

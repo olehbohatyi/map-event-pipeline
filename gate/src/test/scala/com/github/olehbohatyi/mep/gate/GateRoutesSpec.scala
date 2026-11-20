@@ -27,6 +27,17 @@ object GateRoutesSpec extends ZIOSpecDefault:
         case Some("busy") => ZIO.succeed(IngestionResult.InProgress(fixedId))
         case _            => ZIO.succeed(IngestionResult.Accepted(fixedId))
 
+  // The fixed id is open, closedId closed already, failingId fails; any other id is not stored
+  val closedId  = UUID.fromString("00000000-0000-0000-0000-000000000002")
+  val failingId = UUID.fromString("00000000-0000-0000-0000-000000000003")
+
+  object StubResolution extends ResolutionService:
+    def resolve(id: UUID): Task[ResolveResult] =
+      if id == fixedId then ZIO.succeed(ResolveResult.Requested(id))
+      else if id == closedId then ZIO.succeed(ResolveResult.AlreadyClosed(id, EventStatus.Expired))
+      else if id == failingId then ZIO.fail(RuntimeException("kafka down"))
+      else ZIO.succeed(ResolveResult.NotFound(id))
+
   final class StubQuery(calls: Ref[List[(GeoPoint, Double, Int)]]) extends QueryService:
     def findNearby(center: GeoPoint, radiusKm: Double, limit: Int): Task[NearbyResponse] =
       calls.update(_ :+ (center, radiusKm, limit)).as(NearbyResponse("zone_50_30", 1, List(Samples.event())))
@@ -59,7 +70,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
       tracing <- ZIO.service[Tracing]
       res     <-
         ZIO.scoped {
-          GateRoutes(StubIngestion, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing)
+          GateRoutes(StubIngestion, StubResolution, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing)
             .runZIO(req)
             .flatMap(r => r.body.asString.orDie.map(r.status -> _))
         }
@@ -90,6 +101,23 @@ object GateRoutesSpec extends ZIOSpecDefault:
           s == Status.Conflict,
           b == "{\"error\":\"a request with this Idempotency-Key is still being processed; retry it\"}",
         )
+      )
+    },
+    test("accepts a request to resolve an open event with 202") {
+      call(Request.post(URL(Path.decode(s"/api/v1/events/$fixedId/resolve")), Body.empty)).map((s, b) =>
+        assertTrue(s == Status.Accepted, b == s"{\"id\":\"$fixedId\",\"status\":\"resolving\"}")
+      )
+    },
+    test("answers resolving an event that is not stored with 404, a closed one with 409, a failure with 500") {
+      def resolve(id: UUID) = call(Request.post(URL(Path.decode(s"/api/v1/events/$id/resolve")), Body.empty))
+      for
+        missing <- resolve(UUID.randomUUID())
+        closed  <- resolve(closedId)
+        failed  <- resolve(failingId)
+      yield assertTrue(
+        missing._1 == Status.NotFound,
+        closed == (Status.Conflict, s"{\"error\":\"event $closedId is already Expired\"}"),
+        failed == (Status.InternalServerError, "{\"error\":\"internal\"}"),
       )
     },
     test("rejects an invalid body with 400 and well-formed JSON") {
@@ -239,7 +267,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
           feed   <- LiveFeed.fromSource(ZStream.fromQueue(source))
           calls  <- Ref.make(List.empty[(GeoPoint, Double, Int)])
           res    <- GateRoutes
-                      .api(StubIngestion, StubQuery(calls), feed, RateLimiter.unlimited)
+                      .api(StubIngestion, StubResolution, StubQuery(calls), feed, RateLimiter.unlimited)
                       .runZIO(get("/api/v1/events/live?bbox=30,50,31,51"))
           seen   <- Ref.make("")
           reader <- res.body.asStream.via(ZPipeline.utf8Decode).runForeach(s => seen.update(_ + s)).fork
@@ -266,7 +294,8 @@ object GateRoutesSpec extends ZIOSpecDefault:
         for
           calls   <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
           tracing <- ZIO.service[Tracing]
-          res     <- GateRoutes(StubIngestion, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing).runZIO(get("/map"))
+          res     <- GateRoutes(StubIngestion, StubResolution, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing)
+                       .runZIO(get("/map"))
           body    <- res.body.asString.orDie
         yield assertTrue(
           res.status == Status.Ok,

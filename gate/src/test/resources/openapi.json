@@ -59,7 +59,8 @@
         "enum" : [
           "Raw",
           "Enriched",
-          "Archived"
+          "Resolved",
+          "Expired"
         ],
         "type" : "string"
       },
@@ -158,6 +159,15 @@
       },
       "MapEvent" : {
         "properties" : {
+          "closedAt" : {
+            "default" : null,
+            "description" : "If not set, this field defaults to the value of the default annotation.",
+            "format" : "date-time",
+            "type" : [
+              "string",
+              "null"
+            ]
+          },
           "createdAt" : {
             "format" : "date-time",
             "type" : "string"
@@ -311,6 +321,22 @@
         "required" : [
           "count",
           "events"
+        ],
+        "type" : "object"
+      },
+      "ResolveAccepted" : {
+        "properties" : {
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "id",
+          "status"
         ],
         "type" : "object"
       },
@@ -517,7 +543,7 @@
                 }
               }
             },
-            "description" : "Server-sent events, one per event the pipe finishes: `event: event`, `id: <event id>`, `data: <MapEvent JSON>`. A `:heartbeat` comment every 15 seconds keeps the connection open. Delivery is best effort: a client that falls far behind loses its oldest events, and the same event may arrive twice.\n\n"
+            "description" : "Server-sent events, one per event the pipe finishes or closes: `event: event`, `id: <event id>`, `data: <MapEvent JSON>`. A closed event arrives again with status `Resolved` or `Expired`. A `:heartbeat` comment every 15 seconds keeps the connection open. Delivery is best effort: a client that falls far behind loses its oldest events, and the same event may arrive twice.\n\n"
           },
           "400" : {
             "content" : {
@@ -590,7 +616,7 @@
                 }
               }
             },
-            "description" : "Events around the point, closest first, and the region the point is in.\n\n"
+            "description" : "Open events around the point, closest first, and the region the point is in.\n\n"
           },
           "400" : {
             "content" : {
@@ -637,7 +663,7 @@
                 }
               }
             },
-            "description" : "The latest events by occurrence time, newest first.\n\n"
+            "description" : "The latest open events by occurrence time, newest first.\n\n"
           },
           "400" : {
             "content" : {
@@ -683,7 +709,7 @@
                 }
               }
             },
-            "description" : "The event, once the pipe has stored it.\n\n"
+            "description" : "The event, once the pipe has stored it, open or closed.\n\n"
           },
           "404" : {
             "content" : {
@@ -693,6 +719,76 @@
                 }
               }
             }
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Internal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/{id}/resolve" : {
+      "post" : {
+        "parameters" : [
+          {
+            "in" : "path",
+            "name" : "id",
+            "required" : true,
+            "schema" : {
+              "format" : "uuid",
+              "type" : "string"
+            },
+            "style" : "simple"
+          }
+        ],
+        "responses" : {
+          "202" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ResolveAccepted"
+                }
+              }
+            },
+            "description" : "The request was published; the pipe marks the event `Resolved` shortly. It then leaves the nearby and recent lists and the live map, which receives it once more with its new status.\n\n"
+          },
+          "404" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/NotFound",
+                  "description" : "No stored event with this id (yet).\n\n"
+                }
+              }
+            },
+            "description" : "No stored event with this id (yet).\n\n"
+          },
+          "409" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Conflict",
+                  "description" : "The event is closed already: resolved or expired.\n\n"
+                }
+              }
+            },
+            "description" : "The event is closed already: resolved or expired.\n\n"
+          },
+          "429" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/TooManyRequests",
+                  "description" : "Too many submissions from this client address in the current window (shared with event submissions).\n\n"
+                }
+              }
+            },
+            "description" : "Too many submissions from this client address in the current window (shared with event submissions).\n\n"
           },
           "500" : {
             "content" : {

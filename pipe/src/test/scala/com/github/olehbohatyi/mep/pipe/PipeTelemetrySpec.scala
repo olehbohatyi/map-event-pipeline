@@ -59,5 +59,7 @@ object PipeTelemetrySpec extends ZIOSpecDefault:
     EnrichmentService.live,
     EventHandlerSpec.routingOnly,
     EventHandler.live,
+    ZLayer.succeed(TestLifecycle.config),
+    LifecycleService.live,
     RecordHandler.live,
   ) @@ TestAspect.sequential

@@ -16,5 +16,7 @@ final case class MapEvent(
     region: Option[String],
     occurredAt: Instant,
     createdAt: Instant,
+    // When the event was resolved or expired; absent while it is open
+    closedAt: Option[Instant] = None,
   ) derives JsonCodec,
       Schema

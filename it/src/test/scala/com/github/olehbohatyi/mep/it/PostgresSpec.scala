@@ -64,6 +64,62 @@ object PostgresSpec extends ZIOSpecDefault:
         found <- repo.findRecent(2)
       yield assertTrue(found.map(_.id) == List(last.id, mid.id))
     },
+    test("close closes an open event once; a closed event keeps its first status and time") {
+      val event  = Samples.event(status = EventStatus.Enriched)
+      val first  = java.time.Instant.parse("2026-11-20T10:00:00Z")
+      val second = java.time.Instant.parse("2026-11-20T11:00:00Z")
+      for
+        repo    <- ZIO.service[EventRepo]
+        _       <- repo.insert(event)
+        closed  <- repo.close(event.id, EventStatus.Expired, first)
+        again   <- repo.close(event.id, EventStatus.Resolved, second)
+        missing <- repo.close(java.util.UUID.randomUUID(), EventStatus.Resolved, second)
+        found   <- repo.findById(event.id)
+      yield assertTrue(
+        closed,
+        !again,
+        !missing,
+        found.contains(event.copy(status = EventStatus.Expired, closedAt = Some(first))),
+      )
+    },
+    test("findNearby and findRecent leave closed events out; findById still finds them") {
+      // Newer than any other test's events, in a spot of its own
+      val spot             = GeoPoint(-40.0, -60.0)
+      val at               = java.time.Instant.parse("2032-01-01T00:00:00Z")
+      val List(open, done) =
+        List.fill(2)(Samples.event(location = spot, status = EventStatus.Enriched).copy(occurredAt = at)): @unchecked
+      for
+        repo   <- ZIO.service[EventRepo]
+        _      <- repo.insert(open) *> repo.insert(done)
+        _      <- repo.close(done.id, EventStatus.Resolved, at)
+        nearby <- repo.findNearby(spot, 1, 10)
+        recent <- repo.findRecent(2)
+        byId   <- repo.findById(done.id)
+      yield assertTrue(
+        nearby.map(_.id) == List(open.id),
+        recent.map(_.id).contains(open.id),
+        !recent.exists(_.id == done.id),
+        byId.exists(_.status == EventStatus.Resolved),
+      )
+    },
+    test("findExpired returns open events of one type received before the cutoff, oldest first, at most limit") {
+      // Older than any other test's events
+      val at                                                                                        = (y: Int) => java.time.Instant.parse(s"${y}-01-01T00:00:00Z")
+      def received(y: Int, t: EventType = EventType.Traffic, s: EventStatus = EventStatus.Enriched) =
+        Samples.event(eventType = t, status = s).copy(occurredAt = at(y), createdAt = at(y))
+      val oldest                                                                                    = received(2001)
+      val older                                                                                     = received(2002)
+      val old                                                                                       = received(2003)
+      val recent                                                                                    = received(2010)
+      val hazard                                                                                    = received(2001, t = EventType.Hazard)
+      val resolved                                                                                  = received(2001, s = EventStatus.Resolved)
+      for
+        repo  <- ZIO.service[EventRepo]
+        _     <- ZIO.foreachDiscard(List(recent, old, hazard, oldest, resolved, older))(repo.insert)
+        found <- repo.findExpired(EventType.Traffic, at(2005), 2)
+        all   <- repo.findExpired(EventType.Traffic, at(2005), 10)
+      yield assertTrue(found.map(_.id) == List(oldest.id, older.id), all.map(_.id) == List(oldest.id, older.id, old.id))
+    },
     test("trends are read from a given hour on, for all regions or one") {
       val rows  =
         """INSERT INTO map_event_trends (window_start, region, event_type, count) VALUES

@@ -16,7 +16,7 @@ object TopicBootstrapSpec extends ZIOSpecDefault:
     test("declares every pipeline topic with the configured partitions and replication") {
       val topics = TopicBootstrap.newTopics(TestKafka.config())
       assertTrue(
-        topics.map(_.name).toSet == Set("raw", "enriched", "hazards", "signs", "traffic", "dlq"),
+        topics.map(_.name).toSet == Set("raw", "enriched", "hazards", "signs", "traffic", "dlq", "status", "closed"),
         topics.forall(t => t.numPartitions == 2 && t.replicationFactor == 1.toShort),
       )
     },
