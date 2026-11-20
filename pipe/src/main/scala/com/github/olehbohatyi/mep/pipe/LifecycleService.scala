@@ -16,7 +16,8 @@ enum CloseOutcome:
 
 /** Closes events: on a client's request (the status topic) and when they expire. Every event this closes, or finds
   * closed, is published to the closed topic for the live map. Publishing again is harmless (consumers key events by id)
-  * and covers a pipe that stopped between closing an event and publishing it.
+  * and covers a pipe that stopped between closing an event and publishing it: a status change is consumed again, and
+  * the sweep publishes an event before closing it.
   */
 trait LifecycleService:
   def apply(change: StatusChange): Task[CloseOutcome]
@@ -68,14 +69,17 @@ object LifecycleService:
               repo.findExpired(eventType, cutoff, Batch).flatMap { due =>
                 ZIO
                   .foldLeft(due)(0) { (n, event) =>
-                    repo.close(event.id, EventStatus.Expired, now).flatMap {
-                      // Another pipe's sweep, or a client, closed it first and published it
-                      case false => ZIO.succeed(n)
-                      case true  =>
-                        producer
-                          .publish(kafka.topics.closed, event.copy(status = EventStatus.Expired, closedAt = Some(now)))
-                          .as(n + 1)
-                    }
+                    // Published before it is closed: a pipe that stops in between leaves the event open, so the next
+                    // sweep finds it again; closed first, no sweep would look at it again
+                    producer.publish(
+                      kafka.topics.closed,
+                      event.copy(status = EventStatus.Expired, closedAt = Some(now)),
+                    )
+                      *> repo.close(event.id, EventStatus.Expired, now).flatMap {
+                        case true  => ZIO.succeed(n + 1)
+                        // Another pipe's sweep, or a client, closed it first: publish what is stored, after ours
+                        case false => republish(event.id).as(n)
+                      }
                   }
                   .flatMap(n => if due.size < Batch then ZIO.succeed(total + n) else loop(total + n))
               }
@@ -83,6 +87,9 @@ object LifecycleService:
           }
           .map(_.sum)
       }
+
+    private def republish(id: java.util.UUID): Task[Unit] =
+      repo.findById(id).flatMap(ZIO.foreachDiscard(_)(producer.publish(kafka.topics.closed, _)))
 
     def sweep: UIO[Nothing] =
       expireDue

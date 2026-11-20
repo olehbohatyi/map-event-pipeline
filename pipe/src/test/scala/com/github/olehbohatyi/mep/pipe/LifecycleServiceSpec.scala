@@ -89,6 +89,26 @@ object LifecycleServiceSpec extends ZIOSpecDefault:
         sent == Chunk("closed" -> oldTraffic.copy(status = EventStatus.Expired, closedAt = Some(now))),
       )
     },
+    // Closed first and the publish lost, no later sweep would find the event: it would stay on the live map
+    test("an event whose publish fails stays open, and the next sweep expires and publishes it") {
+      for
+        _       <- TestClock.setTime(now)
+        event   <- stored(received(EventType.Traffic, 3.hours))
+        svc     <- ZIO.service[LifecycleService]
+        _       <- ZIO.serviceWithZIO[RecordingProducer](_.failNext(1))
+        failed  <- svc.expireDue.exit
+        between <- find(event.id)
+        expired <- svc.expireDue
+        after   <- find(event.id)
+        sent    <- published
+      yield assertTrue(
+        failed.isFailure,
+        between.exists(_.status == EventStatus.Enriched),
+        expired == 1,
+        after.exists(_.status == EventStatus.Expired),
+        sent.map((topic, e) => topic -> e.status) == Chunk("closed" -> EventStatus.Expired),
+      )
+    },
     test("works through a backlog larger than one batch") {
       val backlog = List.fill(LifecycleService.Batch + 3)(received(EventType.Sign, 31.days))
       for

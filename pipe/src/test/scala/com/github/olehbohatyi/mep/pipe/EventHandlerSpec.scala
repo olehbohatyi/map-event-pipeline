@@ -89,6 +89,18 @@ object EventHandlerSpec extends ZIOSpecDefault:
         rows     <- repo.all
       yield assertTrue(outcome == Outcome.Processed("hazards"), sent.size == 2, rows.size == 1)
     },
+    test("a redelivered event that was closed since is not published again, so it stays off the live map") {
+      val event = Samples.event()
+      for
+        handler  <- ZIO.service[EventHandler]
+        repo     <- ZIO.service[InMemoryEventRepo]
+        producer <- ZIO.service[RecordingProducer]
+        _        <- repo.insert(event.copy(status = EventStatus.Resolved))
+        outcome  <- handler.handle(event)
+        sent     <- producer.all
+        stored   <- repo.findById(event.id)
+      yield assertTrue(outcome == Outcome.Duplicate, sent.isEmpty, stored.exists(_.status == EventStatus.Resolved))
+    },
   ).provide(
     TestTelemetry.tracing,
     ZLayer.succeed(kafka),
