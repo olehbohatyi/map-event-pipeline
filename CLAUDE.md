@@ -127,7 +127,9 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   publishes a `StatusChange` to the status topic; the pipe's `RecordHandler` sends that topic to `LifecycleService`,
   which also runs the expiry sweep beside the stream (`PipeApp`, `<&`). Closing is the conditional SQL in
   `EventRepo.close` (Quill's `update(_.f -> v)` does not parse on Scala 3.10: `->` compiles to `Tuple2.apply`); expiry
-  finds due events and closes each through it, so concurrent sweeps close an event once. Every closed event goes to
+  finds due events and closes each through it, so concurrent sweeps close an event once; it publishes an event before
+  closing it (closed first, a lost publish is never retried) and runs `LifecycleService.Parallelism` at once, below the
+  Postgres pool it shares with the stream. Every closed event goes to
   the closed topic, which `LiveFeed` tails with enriched. `/nearby` and `/recent` show open events only; the stat jobs
   count closed ones too (`EventAggregator.Counted`). Lifetimes count from `createdAt`, as the streaming job does.
 - Inside compose the apps reach Kafka as `broker:9092` (network alias of both broker profiles); from the host it is

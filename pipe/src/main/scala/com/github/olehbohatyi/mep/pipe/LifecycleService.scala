@@ -2,9 +2,11 @@ package com.github.olehbohatyi.mep.pipe
 
 import zio.*
 
+import java.time.Instant
+
 import com.github.olehbohatyi.mep.broker.ProducerService
 import com.github.olehbohatyi.mep.config.{ KafkaConfig, LifecycleConfig }
-import com.github.olehbohatyi.mep.domain.{ EventStatus, EventType, StatusChange }
+import com.github.olehbohatyi.mep.domain.{ EventStatus, EventType, MapEvent, StatusChange }
 import com.github.olehbohatyi.mep.stores.EventRepo
 
 enum CloseOutcome:
@@ -30,6 +32,10 @@ object LifecycleService:
 
   // Events expired per type and query, so a backlog (a pipe that was off) is worked through in bounded steps
   val Batch = 500
+
+  // Events of a batch expired at once. The sweep shares the Postgres pool (max-pool, 10 by default) with the stream,
+  // so it must leave connections for it
+  val Parallelism = 8
 
   val live: URLayer[EventRepo & ProducerService & KafkaConfig & LifecycleConfig, LifecycleService] =
     ZLayer.fromFunction(LifecycleServiceLive(_, _, _, _))
@@ -60,33 +66,36 @@ object LifecycleService:
         yield outcome
 
     def expireDue: Task[Int] =
-      Clock.instant.flatMap { now =>
+      Clock.instant.flatMap { started =>
         ZIO
           .foreach(EventType.values.toList) { eventType =>
-            val cutoff                      = now.minus(lifecycle.ttl(eventType))
+            val cutoff                      = started.minus(lifecycle.ttl(eventType))
             // Until a batch comes back short: the backlog is done
             def loop(total: Int): Task[Int] =
-              repo.findExpired(eventType, cutoff, Batch).flatMap { due =>
-                ZIO
-                  .foldLeft(due)(0) { (n, event) =>
-                    // Published before it is closed: a pipe that stops in between leaves the event open, so the next
-                    // sweep finds it again; closed first, no sweep would look at it again
-                    producer.publish(
-                      kafka.topics.closed,
-                      event.copy(status = EventStatus.Expired, closedAt = Some(now)),
-                    )
-                      *> repo.close(event.id, EventStatus.Expired, now).flatMap {
-                        case true  => ZIO.succeed(n + 1)
-                        // Another pipe's sweep, or a client, closed it first: publish what is stored, after ours
-                        case false => republish(event.id).as(n)
-                      }
-                  }
-                  .flatMap(n => if due.size < Batch then ZIO.succeed(total + n) else loop(total + n))
-              }
+              for
+                due  <- repo.findExpired(eventType, cutoff, Batch)
+                // The batch's own time: a backlog takes a while, and closedAt should say when the event closed
+                now  <- Clock.instant
+                // Each event waits for the broker's ack and a round trip to Postgres; one at a time that is about
+                // 40 events a second, so a backlog after downtime took minutes. Events are independent (keyed by id)
+                done <- ZIO.foreachPar(due)(expire(_, now)).withParallelism(Parallelism)
+                n     = done.count(identity)
+                more <- if due.size < Batch then ZIO.succeed(total + n) else loop(total + n)
+              yield more
             loop(0)
           }
           .map(_.sum)
       }
+
+    // Published before it is closed: a pipe that stops in between leaves the event open, so the next sweep finds it
+    // again; closed first, no sweep would look at it again. True if this sweep closed it
+    private def expire(event: MapEvent, now: Instant): Task[Boolean] =
+      producer.publish(kafka.topics.closed, event.copy(status = EventStatus.Expired, closedAt = Some(now)))
+        *> repo.close(event.id, EventStatus.Expired, now).tap {
+          // Another pipe's sweep, or a client, closed it first: publish what is stored, after ours
+          case false => republish(event.id)
+          case true  => ZIO.unit
+        }
 
     private def republish(id: java.util.UUID): Task[Unit] =
       repo.findById(id).flatMap(ZIO.foreachDiscard(_)(producer.publish(kafka.topics.closed, _)))

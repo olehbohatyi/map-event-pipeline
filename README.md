@@ -19,7 +19,7 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 |---|---|
 | **Stack** | Scala 3, ZIO 2, zio-http, zio-kafka, Quill, Kafka / Redpanda, PostgreSQL + PostGIS, Redis, Spark 4, OpenTelemetry (Tempo, Prometheus, Loki, Grafana), Gatling, Docker, Helm |
 | **Performance** | CI baseline load test: 4,730 requests, 0 failed; `POST /api/v1/events` p95 18 ms; event posted → stored in Postgres p95 294 ms ([load testing](#load-testing-gatling)) |
-| **Tests** | 145 tests, 34 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
+| **Tests** | 148 tests, 34 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
 | **Process** | 26 pull requests, each green in CI before merge; every phase began with a spike whose findings are in [docs/decisions.md](docs/decisions.md) |
 
 ## Highlights
@@ -121,8 +121,11 @@ but keeps counting in the stats, and `GET /api/v1/events/{id}` still returns it 
   answers `202`; it never writes Postgres itself. The pipe reads that topic beside `map.events.raw`.
 - **Expire.** Every minute the pipe looks for open events received (`createdAt`, the gate's clock, not the client's
   `occurredAt`) more than their lifetime ago: hazards 6 hours, traffic 2 hours, signs 30 days (`EVENT_HAZARD_TTL`,
-  `EVENT_TRAFFIC_TTL`, `EVENT_SIGN_TTL`). A pipe that was off works through the backlog 500 at a time. A failed sweep
-  is logged and the next one tries again; the stream is not stopped for it.
+  `EVENT_TRAFFIC_TTL`, `EVENT_SIGN_TTL`). A pipe that was off works through the backlog 500 at a time, 8 events in
+  flight (it shares the Postgres pool with the stream): 5000 overdue events took about 30 s in the local compose stack,
+  a quarter of the time one at a time took. Each event goes to the closed topic before it is closed, so a pipe stopped
+  in between leaves it open for the next sweep. A failed sweep is logged and the next one tries again; the stream is
+  not stopped for it.
 - **Once.** Closing is one conditional `UPDATE` (`… WHERE status IN ('Raw', 'Enriched')`), so the first close wins: a
   replayed request, a resolve racing an expiry, or two pipes sweeping at once change an event once, and a closed event
   keeps its first status and time.
