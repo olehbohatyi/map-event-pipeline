@@ -42,12 +42,17 @@ object EventHandler:
           for
             enriched  <- tracing.span("enrich")(enrichment.enrich(event))
             escalated <- tracing.span("escalate")(escalation.escalate(enriched))
-            _         <- tracing.span("store")(repo.insert(escalated))
-            topic      = escalation.topicFor(escalated)
-            // Publish even if the row already existed: a previous attempt may have
-            // crashed between insert and publish. Consumers dedup by event id.
-            _         <- producer.publish(kafka.topics.enriched, escalated)
-            _         <- producer.publish(topic, escalated)
+            inserted  <- tracing.span("store")(repo.insert(escalated))
+            // Stored before and closed since (a redelivery, or a dedup key that expired): publishing it as enriched
+            // would put a closed event back on the live map
+            closed    <- if inserted then ZIO.succeed(false) else repo.findById(event.id).map(_.exists(_.status.isClosed))
+            outcome   <- if closed then ZIO.succeed(Outcome.Duplicate) else publish(escalated)
             _         <- tracing.span("dedup mark")(dedup.markProcessed(event))
-          yield Outcome.Processed(topic)
+          yield outcome
       }
+
+    // Publish even if the row already existed: a previous attempt may have
+    // crashed between insert and publish. Consumers dedup by event id.
+    private def publish(event: MapEvent): Task[Outcome] =
+      val topic = escalation.topicFor(event)
+      producer.publish(kafka.topics.enriched, event) *> producer.publish(topic, event).as(Outcome.Processed(topic))
