@@ -5,7 +5,7 @@ import zio.*
 import java.time.Instant
 
 import com.github.olehbohatyi.mep.broker.ProducerService
-import com.github.olehbohatyi.mep.config.{ KafkaConfig, LifecycleConfig }
+import com.github.olehbohatyi.mep.config.{ KafkaConfig, LifecycleConfig, PostgresConfig }
 import com.github.olehbohatyi.mep.domain.{ EventStatus, EventType, MapEvent, StatusChange }
 import com.github.olehbohatyi.mep.stores.EventRepo
 
@@ -33,18 +33,30 @@ object LifecycleService:
   // Events expired per type and query, so a backlog (a pipe that was off) is worked through in bounded steps
   val Batch = 500
 
-  // Events of a batch expired at once. The sweep shares the Postgres pool (max-pool, 10 by default) with the stream,
-  // so it must leave connections for it
+  // Events of a batch expired at once, at most
   val Parallelism = 8
 
-  val live: URLayer[EventRepo & ProducerService & KafkaConfig & LifecycleConfig, LifecycleService] =
-    ZLayer.fromFunction(LifecycleServiceLive(_, _, _, _))
+  // The sweep shares the Postgres pool with the stream: it leaves two connections for it, whatever max-pool is
+  def parallelism(maxPool: Int): Int = (maxPool - 2).max(1).min(Parallelism)
+
+  val live: URLayer[EventRepo & ProducerService & KafkaConfig & LifecycleConfig & PostgresConfig, LifecycleService] =
+    ZLayer.fromFunction {
+      (
+          repo: EventRepo,
+          producer: ProducerService,
+          kafka: KafkaConfig,
+          lifecycle: LifecycleConfig,
+          pg: PostgresConfig,
+        ) =>
+        LifecycleServiceLive(repo, producer, kafka, lifecycle, parallelism(pg.maxPool))
+    }
 
   final private class LifecycleServiceLive(
       repo: EventRepo,
       producer: ProducerService,
       kafka: KafkaConfig,
       lifecycle: LifecycleConfig,
+      inFlight: Int,
     ) extends LifecycleService:
 
     def apply(change: StatusChange): Task[CloseOutcome] =
@@ -78,7 +90,7 @@ object LifecycleService:
                 now  <- Clock.instant
                 // Each event waits for the broker's ack and a round trip to Postgres; one at a time that is about
                 // 40 events a second, so a backlog after downtime took minutes. Events are independent (keyed by id)
-                done <- ZIO.foreachPar(due)(expire(_, now)).withParallelism(Parallelism)
+                done <- ZIO.foreachPar(due)(expire(_, now)).withParallelism(inFlight)
                 n     = done.count(identity)
                 more <- if due.size < Batch then ZIO.succeed(total + n) else loop(total + n)
               yield more
