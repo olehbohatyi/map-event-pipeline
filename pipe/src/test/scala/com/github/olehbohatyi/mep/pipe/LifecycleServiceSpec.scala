@@ -132,10 +132,20 @@ object LifecycleServiceSpec extends ZIOSpecDefault:
                        ZLayer.succeed[ProducerService](producer),
                        ZLayer.succeed(kafka),
                        ZLayer.succeed(TestLifecycle.config),
+                       ZLayer.succeed(TestLifecycle.pool()),
                        LifecycleService.live,
                      )
-        expired <- Live.withLive(expire)(_.timeoutFail("expired one event at a time")(10.seconds))
+        // The sweep runs on the test clock; only the timeout is real time
+        expired <- expire.raceFirst(Live.live(ZIO.sleep(10.seconds)) *> ZIO.fail(RuntimeException("one at a time")))
       yield assertTrue(expired == LifecycleService.Parallelism)
+    },
+    test("leaves two connections of the Postgres pool to the stream") {
+      assertTrue(
+        LifecycleService.parallelism(10) == 8,
+        LifecycleService.parallelism(30) == LifecycleService.Parallelism,
+        LifecycleService.parallelism(4) == 2,
+        LifecycleService.parallelism(2) == 1,
+      )
     },
     test("works through a backlog larger than one batch") {
       val backlog = List.fill(LifecycleService.Batch + 3)(received(EventType.Sign, 31.days))
@@ -151,5 +161,6 @@ object LifecycleServiceSpec extends ZIOSpecDefault:
     RecordingProducer.layer,
     ZLayer.succeed(TestKafka.config()),
     ZLayer.succeed(TestLifecycle.config),
+    ZLayer.succeed(TestLifecycle.pool()),
     LifecycleService.live,
   )
