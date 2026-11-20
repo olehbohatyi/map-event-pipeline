@@ -15,13 +15,19 @@ import com.github.olehbohatyi.mep.broker.{ EventCodec, ProducerService, TopicBoo
 import com.github.olehbohatyi.mep.caches.*
 import com.github.olehbohatyi.mep.config.*
 import com.github.olehbohatyi.mep.domain.*
-import com.github.olehbohatyi.mep.gate.{ EventRequest, IngestionResult, IngestionService }
+import com.github.olehbohatyi.mep.gate.{
+  EventRequest,
+  IngestionResult,
+  IngestionService,
+  ResolutionService,
+  ResolveResult,
+}
 import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.pipe.*
 import com.github.olehbohatyi.mep.stores.*
-import com.github.olehbohatyi.mep.testkit.TestTelemetry
+import com.github.olehbohatyi.mep.testkit.{ TestLifecycle, TestTelemetry }
 
-// End to end: gate ingestion → Kafka raw → pipe → Postgres + typed topic
+// End to end: gate ingestion → Kafka raw → pipe → Postgres + typed topic, and a resolve request back through it
 object PipelineSpec extends ZIOSpecDefault:
 
   private val request = EventRequest(EventType.Hazard, Severity.High, GeoPoint(50.45, 30.52), Some("flood"), None)
@@ -129,6 +135,31 @@ object PipelineSpec extends ZIOSpecDefault:
         Set("raw publish", "raw process", "enrich", "store", "enriched publish", "hazards publish").subsetOf(trace),
       )
     },
+    test("a resolve request goes through Kafka to the pipe, which closes the event and publishes it for the map") {
+      for
+        cfg       <- ZIO.service[KafkaConfig]
+        processor <- ZIO.serviceWithZIO[StreamProcessor](_.run).fork
+        gate      <- ZIO.service[IngestionService]
+        _         <- gate.ingest(request, Some("resolve-1"))
+        id         = IngestionService.eventId("resolve-1")
+        repo      <- ZIO.service[EventRepo]
+        _         <- eventually(repo.findById(id))
+        resolver  <- ZIO.service[ResolutionService]
+        requested <- resolver.resolve(id)
+        resolved  <- eventually(repo.findById(id).map(_.filter(_.status.isClosed)))
+        closed    <- readTopic(cfg, cfg.topics.closed, 1).timeoutFail(RuntimeException("no closed event"))(60.seconds)
+        again     <- resolver.resolve(id)
+        recent    <- repo.findRecent(500)
+        _         <- processor.interrupt
+      yield assertTrue(
+        requested == ResolveResult.Requested(id),
+        resolved.status == EventStatus.Resolved,
+        resolved.closedAt.isDefined,
+        closed.map(e => e.id -> e.status) == Chunk(id -> EventStatus.Resolved),
+        again == ResolveResult.AlreadyClosed(id, EventStatus.Resolved),
+        !recent.exists(_.id == id),
+      )
+    },
     // The pipe processes partitions in parallel: every event on every partition is handled and committed
     test("events on every partition are processed and their offsets committed") {
       for
@@ -176,6 +207,9 @@ object PipelineSpec extends ZIOSpecDefault:
       EnrichmentService.live,
       EscalationService.live,
       EventHandler.live,
+      ZLayer.succeed(TestLifecycle.config),
+      LifecycleService.live,
+      ResolutionService.live,
       RecordHandler.live,
       StreamProcessor.live,
     )

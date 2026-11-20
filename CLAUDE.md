@@ -122,6 +122,14 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   omits the `ServerSentEvent` schema it refers to; `GateApi.openApi` adds it and `OpenApiSpec` checks every `$ref`.
   Tests that read an SSE body subscribe first (`feed.subscribers`) and then publish; the map page builds popups with
   `textContent` because `description` is user input.
+- Event lifecycle: `EventStatus` is open (`Raw`, `Enriched`) or closed (`Resolved`, `Expired`, `isClosed`); closed
+  never reopens. The gate never writes Postgres: `ResolutionService` checks the event is stored and open, then
+  publishes a `StatusChange` to the status topic; the pipe's `RecordHandler` sends that topic to `LifecycleService`,
+  which also runs the expiry sweep beside the stream (`PipeApp`, `<&`). Closing is the conditional SQL in
+  `EventRepo.close` (Quill's `update(_.f -> v)` does not parse on Scala 3.10: `->` compiles to `Tuple2.apply`); expiry
+  finds due events and closes each through it, so concurrent sweeps close an event once. Every closed event goes to
+  the closed topic, which `LiveFeed` tails with enriched. `/nearby` and `/recent` show open events only; the stat jobs
+  count closed ones too (`EventAggregator.Counted`). Lifetimes count from `createdAt`, as the streaming job does.
 - Inside compose the apps reach Kafka as `broker:9092` (network alias of both broker profiles); from the host it is
   `localhost:${KAFKA_PORT}`.
 

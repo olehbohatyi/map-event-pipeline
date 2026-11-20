@@ -36,6 +36,8 @@ object TrendsBackfillSpec extends ZIOSpecDefault:
     row("10:00:00"),
     row("10:30:00.123456"),
     row("10:45:00", eventType = "Sign"),
+    row("10:46:00", eventType = "Sign", status = "Resolved"),
+    row("10:47:00", eventType = "Sign", status = "Expired"),
     row("10:50:00", region = "Lviv Oblast"),
     row("11:10:00"),
     row("12:05:00"),
@@ -62,7 +64,7 @@ object TrendsBackfillSpec extends ZIOSpecDefault:
       yield assertTrue(
         counts == Map(
           (hour(10), "Kyiv City", "Hazard")   -> 2L,
-          (hour(10), "Kyiv City", "Sign")     -> 1L,
+          (hour(10), "Kyiv City", "Sign")     -> 3L,
           (hour(10), "Lviv Oblast", "Hazard") -> 1L,
           (hour(11), "Kyiv City", "Hazard")   -> 1L,
         )

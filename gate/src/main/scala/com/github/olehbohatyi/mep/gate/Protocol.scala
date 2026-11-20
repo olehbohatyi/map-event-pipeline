@@ -27,6 +27,9 @@ final case class IngestAccepted(id: UUID, status: String) derives JsonCodec, Sch
 // 200: the Idempotency-Key was already used, nothing was published again
 final case class IngestDuplicate(id: UUID, status: String) derives JsonCodec, Schema
 
+// 202: the request to resolve the event was published; the pipe closes it shortly
+final case class ResolveAccepted(id: UUID, status: String) derives JsonCodec, Schema
+
 final case class NearbyResponse(region: String, count: Int, events: List[MapEvent]) derives JsonCodec, Schema
 
 final case class RecentResponse(count: Int, events: List[MapEvent]) derives JsonCodec, Schema

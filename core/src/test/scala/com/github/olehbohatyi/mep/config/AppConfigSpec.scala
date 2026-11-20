@@ -22,6 +22,9 @@ object AppConfigSpec extends ZIOSpecDefault:
         cfg.kafka.deliveryTimeout == 10.seconds,
         cfg.postgres.connectTimeout == 5.seconds,
         cfg.postgres.socketTimeout == 30.seconds,
+        cfg.kafka.topics.status == "map.events.status",
+        cfg.kafka.topics.closed == "map.events.closed",
+        cfg.lifecycle == LifecycleConfig(6.hours, 2.hours, 30.days, 1.minute),
       )
     },
     test("splits comma-separated bootstrap servers") {

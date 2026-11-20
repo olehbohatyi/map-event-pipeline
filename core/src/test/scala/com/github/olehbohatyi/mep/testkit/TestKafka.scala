@@ -4,7 +4,7 @@ import com.github.olehbohatyi.mep.config.{ KafkaConfig, TopicsConfig, TopicSetti
 
 // Kafka config for tests; topic names are short so assertions stay readable
 object TestKafka:
-  val topics: TopicsConfig    = TopicsConfig("raw", "enriched", "hazards", "signs", "traffic", "dlq")
+  val topics: TopicsConfig    = TopicsConfig("raw", "enriched", "hazards", "signs", "traffic", "dlq", "status", "closed")
   val settings: TopicSettings =
     TopicSettings(partitions = 2, replicationFactor = 1, retentionHours = 1, dlqRetentionHours = 2)
 

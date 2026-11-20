@@ -16,7 +16,7 @@ import com.github.olehbohatyi.mep.geo.RegionResolver
 import com.github.olehbohatyi.mep.it.Containers.*
 import com.github.olehbohatyi.mep.pipe.*
 import com.github.olehbohatyi.mep.stores.*
-import com.github.olehbohatyi.mep.testkit.TestTelemetry
+import com.github.olehbohatyi.mep.testkit.{ TestLifecycle, TestTelemetry }
 
 // What the delivery guarantees in the README promise when Postgres, Redis or the broker stop answering. Outages are
 // `docker pause`: connections hang rather than being refused, the harder case for timeouts.
@@ -165,5 +165,7 @@ object OutageSpec extends ZIOSpecDefault:
       EnrichmentService.live,
       EscalationService.live,
       EventHandler.live,
+      ZLayer.succeed(TestLifecycle.config),
+      LifecycleService.live,
       RecordHandler.live,
     )

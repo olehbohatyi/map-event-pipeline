@@ -46,14 +46,14 @@ object TrendsBackfill:
     loop(args.toList, None, None)
 
   /** The hourly counts of `events` (`event_type`, `region`, `status`, `created_at`, as in map_events) within `range`:
-    * enriched events with a region, as the pipe publishes them to the stream.
+    * stored events with a region, as the pipe publishes them to the stream, whether they were closed since or not.
     */
   def recount(events: DataFrame, range: Range): DataFrame =
     val inRange = col("created_at") < lit(java.sql.Timestamp.from(range.to)) &&
       range.from.fold(lit(true))(f => col("created_at") >= lit(java.sql.Timestamp.from(f)))
     Trends.counts(
       events
-        .filter(col("status") === "Enriched" && col("region").isNotNull && inRange)
+        .filter(col("status").isin(EventAggregator.Counted*) && col("region").isNotNull && inRange)
         .select(col("event_type").as("eventType"), col("region"), col("created_at").as("createdAt"))
     )
 

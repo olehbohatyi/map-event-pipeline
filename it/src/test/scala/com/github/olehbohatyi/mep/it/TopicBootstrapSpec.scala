@@ -35,7 +35,16 @@ object TopicBootstrapSpec extends ZIOSpecDefault:
       // Replication factor 3 can never succeed on this single-broker cluster
       val impossible = (cfg: KafkaConfig) =>
         cfg.copy(
-          topics = TopicsConfig("rf-raw", "rf-enriched", "rf-hazards", "rf-signs", "rf-traffic", "rf-dlq"),
+          topics = TopicsConfig(
+            "rf-raw",
+            "rf-enriched",
+            "rf-hazards",
+            "rf-signs",
+            "rf-traffic",
+            "rf-dlq",
+            "rf-status",
+            "rf-closed",
+          ),
           topicSettings = cfg.topicSettings.copy(replicationFactor = 3),
         )
       for

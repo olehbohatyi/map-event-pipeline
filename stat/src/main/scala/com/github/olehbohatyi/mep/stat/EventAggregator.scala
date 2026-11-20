@@ -6,12 +6,17 @@ import org.apache.spark.sql.{ DataFrame, SaveMode, SparkSession }
 import org.apache.spark.sql.functions.*
 import scala.util.Using
 
-// Reads map_events, counts enriched events per region and event type, and upserts
+// Reads map_events, counts stored events (open or closed) per region and event type, and upserts
 // the totals into map_event_stats. Uses only the untyped DataFrame API: Dataset
 // encoders rely on Scala 2 TypeTags, which Scala 3 does not provide.
 object EventAggregator:
 
   private val StagingTable = "map_event_stats_staging"
+
+  /** Every event the pipe stored: enriched, and later resolved or expired (`map_events.status`, see core's
+    * `EventStatus`). Closing an event does not take it out of the counts.
+    */
+  val Counted: Seq[String] = Seq("Enriched", "Resolved", "Expired")
 
   def run(spark: SparkSession, cfg: StatConfig): Long =
     val jdbc  = jdbcOptions(cfg)
@@ -23,7 +28,7 @@ object EventAggregator:
 
   def aggregate(events: DataFrame): DataFrame =
     events
-      .filter(col("status") === "Enriched" && col("region").isNotNull)
+      .filter(col("status").isin(Counted*) && col("region").isNotNull)
       .groupBy(col("region"), col("event_type"))
       .agg(count(lit(1)).alias("count"))
       .withColumn("updated_at", current_timestamp())

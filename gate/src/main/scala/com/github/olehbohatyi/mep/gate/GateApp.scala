@@ -35,28 +35,31 @@ object GateApp extends ZIOApp:
       RegionRepo.live,
       RegionResolver.live,
       IngestionService.live,
+      ResolutionService.live,
       QueryService.live,
       LiveFeed.live,
     )
 
   private val program: RIO[
-    IngestionService & QueryService & LiveFeed & RateLimiter & Tracing & HttpConfig & KafkaConfig & PostgresConfig,
+    IngestionService & ResolutionService & QueryService & LiveFeed & RateLimiter & Tracing & HttpConfig & KafkaConfig &
+      PostgresConfig,
     Unit,
   ] =
     for
-      _         <- Migrations.run
-      _         <- TopicBootstrap.run
-      cfg       <- ZIO.service[HttpConfig]
-      ingestion <- ZIO.service[IngestionService]
-      query     <- ZIO.service[QueryService]
-      feed      <- ZIO.service[LiveFeed]
-      limiter   <- ZIO.service[RateLimiter]
-      tracing   <- ZIO.service[Tracing]
-      _         <- ZIO.logInfo(s"Gate listening on ${cfg.host}:${cfg.port}")
+      _          <- Migrations.run
+      _          <- TopicBootstrap.run
+      cfg        <- ZIO.service[HttpConfig]
+      ingestion  <- ZIO.service[IngestionService]
+      resolution <- ZIO.service[ResolutionService]
+      query      <- ZIO.service[QueryService]
+      feed       <- ZIO.service[LiveFeed]
+      limiter    <- ZIO.service[RateLimiter]
+      tracing    <- ZIO.service[Tracing]
+      _          <- ZIO.logInfo(s"Gate listening on ${cfg.host}:${cfg.port}")
       // Ending the live streams first lets the server's graceful shutdown finish the remaining requests quickly;
       // otherwise it waits out its timeout on the endless streams (and `docker stop` kills the gate meanwhile)
-      _         <- Server
-                     .serve(GateRoutes(ingestion, query, feed, limiter, tracing))
-                     .ensuring(feed.close)
-                     .provide(Server.defaultWith(_.binding(cfg.host, cfg.port)))
+      _          <- Server
+                      .serve(GateRoutes(ingestion, resolution, query, feed, limiter, tracing))
+                      .ensuring(feed.close)
+                      .provide(Server.defaultWith(_.binding(cfg.host, cfg.port)))
     yield ()

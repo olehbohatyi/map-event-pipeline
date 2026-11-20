@@ -30,14 +30,14 @@ object StreamProcessor:
       handler: RecordHandler,
     ) extends StreamProcessor:
 
-    /** Partitions are processed in parallel, each in order: an event's partition follows its id (the record key), so
-      * order only matters within one. Offsets are committed in batches (the latest per partition), and only for records
-      * the handler has finished with. Before this, one sequential stream over all partitions capped the pipe at about
-      * 24 events/s (load test baseline).
+    /** Reads new events and close requests (the status topic). Partitions are processed in parallel, each in order: an
+      * event's partition follows its id (the record key), so order only matters within one. Offsets are committed in
+      * batches (the latest per partition), and only for records the handler has finished with. Before this, one
+      * sequential stream over all partitions capped the pipe at about 24 events/s (load test baseline).
       */
     def run: Task[Unit] =
       consumer
-        .partitionedStream(Subscription.topics(kafka.topics.raw), Serde.string, Serde.string)
+        .partitionedStream(Subscription.topics(kafka.topics.raw, kafka.topics.status), Serde.string, Serde.string)
         .flatMapPar(Int.MaxValue) { (_, partition) =>
           partition.mapZIO { record =>
             // The last value of each header wins, as Kafka's own lastHeader does

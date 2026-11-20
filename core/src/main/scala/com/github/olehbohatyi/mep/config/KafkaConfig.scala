@@ -7,8 +7,12 @@ final case class TopicsConfig(
     signs: String,
     traffic: String,
     dlq: String,
+    // Close requests from the gate to the pipe
+    status: String,
+    // Events as the pipe closed them, for the live map
+    closed: String,
   ):
-  def all: List[String] = List(raw, enriched, hazards, signs, traffic, dlq)
+  def all: List[String] = List(raw, enriched, hazards, signs, traffic, dlq, status, closed)
 
 // Applied when TopicBootstrap creates missing topics; existing topics are left as they are,
 // so changing these later does not alter a topic that already exists
