@@ -40,3 +40,7 @@ initContainers:
   {{- end }}
 {{- end }}
 {{- end -}}
+
+{{- define "mep.gateKeysSecret" -}}
+{{- .Values.gate.auth.existingSecret | default (printf "%s-gate-keys" (include "mep.fullname" .)) -}}
+{{- end -}}

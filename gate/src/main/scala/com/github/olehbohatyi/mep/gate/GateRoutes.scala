@@ -18,8 +18,8 @@ import com.github.olehbohatyi.mep.domain.{ GeoPoint, MapEvent }
 
 object GateRoutes:
 
-  // POST /api/v1/events        — ingest a road event (optional Idempotency-Key header)
-  // POST /api/v1/events/{id}/resolve — ask the pipe to close a stored, open event
+  // POST /api/v1/events        — ingest a road event (optional Idempotency-Key header); needs an API key
+  // POST /api/v1/events/{id}/resolve — ask the pipe to close a stored, open event; needs an API key
   // GET  /api/v1/events/nearby — events around lat/lon within radius (km)
   // GET  /api/v1/events/recent — the latest events, newest first
   // GET  /api/v1/events/live   — server-sent events as the pipe finishes them, optionally within ?bbox=
@@ -45,11 +45,12 @@ object GateRoutes:
       resolution: ResolutionService,
       query: QueryService,
       feed: LiveFeed,
+      keys: ApiKeys,
       limiter: RateLimiter,
       tracing: Tracing,
     ): Routes[Any, Nothing] =
     val known =
-      api(ingestion, resolution, query, feed, limiter) ++
+      api(ingestion, resolution, query, feed, keys, limiter) ++
         SwaggerUI.routes(PathCodec.path("docs") / "openapi", GateApi.openApi).handleError(identity) ++
         Routes(Method.GET / "map" -> mapPage)
     Routes.fromIterable(known.routes.map(route => observed(tracing, route.routePattern.pathCodec.render)(route))) ++
@@ -99,12 +100,13 @@ object GateRoutes:
       resolution: ResolutionService,
       query: QueryService,
       feed: LiveFeed,
+      keys: ApiKeys,
       limiter: RateLimiter,
     ): Routes[Any, Nothing] =
     Routes(
       GateApi.health.implement(_ => ZIO.succeed("OK")),
-      limited(limiter)(GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key))),
-      limited(limiter)(GateApi.resolve.implement(id => resolveEvent(resolution, id))),
+      guarded(keys, limiter)(GateApi.ingest.implement((key, req) => postEvent(ingestion, req, key))),
+      guarded(keys, limiter)(GateApi.resolve.implement(id => resolveEvent(resolution, id))),
       GateApi.nearby.implement((lat, lon, radius, limit) => getNearby(query, lat, lon, radius, limit)),
       GateApi.event.implement(id => getEvent(query, id)),
       GateApi.recent.implement(limit => getRecent(query, limit)),
@@ -113,32 +115,45 @@ object GateRoutes:
       GateApi.hourly.implement((region, hours) => getHourly(query, region, hours)),
     ).transform(_.contramap[Request](readBodyAsJson))
 
-  /** Event submissions and resolve requests are limited per client address (one counter for both), before the body is
-    * read. The address is the connection's: behind a proxy every client shares the proxy's, so the limit then belongs
-    * in the proxy. If Redis fails, the request goes through (and is counted as `unavailable`): a missing limit is
-    * better than a gate that accepts nothing. So does a Redis that does not answer within `LimiterTimeout`; without it
-    * a hanging Redis would hang every submission.
+  /** Writes (event submissions and resolve requests) need an API key, checked before anything else: a refused request
+    * costs no Redis call and no body read. They are then rate limited per client, one counter for both kinds: per key,
+    * or per connection address when keys are not required and none was sent (behind a proxy every such client shares
+    * the proxy's address, so the limit then belongs in the proxy). If Redis fails, the request goes through (and is
+    * counted as `unavailable`): a missing limit is better than a gate that accepts nothing. So does a Redis that does
+    * not answer within `LimiterTimeout`; without it a hanging Redis would hang every submission.
     */
-  private def limited(limiter: RateLimiter)(route: Route[Any, Nothing]): Route[Any, Nothing] =
+  private def guarded(keys: ApiKeys, limiter: RateLimiter)(route: Route[Any, Nothing]): Route[Any, Nothing] =
     route.transform { handle =>
       Handler.scoped[Any](Handler.fromFunctionZIO[Request] { req =>
-        val client = req.remoteAddress.fold("unknown")(_.getHostAddress)
-        limiter
-          .acquire(client)
-          .timeoutFail(RuntimeException(s"no answer within $LimiterTimeout"))(LimiterTimeout)
-          .foldCauseZIO(
-            cause =>
-              ZIO.logWarningCause("rate limiter unavailable; request let through", cause) *>
-                GateMetrics.rateLimit("unavailable").as(RateLimiter.Decision.Allowed),
-            ZIO.succeed(_),
-          )
-          .flatMap {
-            case RateLimiter.Decision.Allowed             => GateMetrics.rateLimit("allowed") *> handle(req)
-            case RateLimiter.Decision.Limited(retryAfter) =>
-              GateMetrics.rateLimit("limited").as(tooManyRequests(retryAfter))
-          }
+        keys.check(req.rawHeader(Header.Authorization.name)) match
+          case Left(reason)  => GateMetrics.auth("denied").as(unauthorized(reason))
+          case Right(client) =>
+            GateMetrics.auth(if client.isDefined then "granted" else "open") *>
+              limit(limiter, client.fold(s"ip:${req.remoteAddress.fold("unknown")(_.getHostAddress)}")(n => s"key:$n"))
+                .flatMap {
+                  case RateLimiter.Decision.Allowed             => GateMetrics.rateLimit("allowed") *> handle(req)
+                  case RateLimiter.Decision.Limited(retryAfter) =>
+                    GateMetrics.rateLimit("limited").as(tooManyRequests(retryAfter))
+                }
       })
     }
+
+  private def limit(limiter: RateLimiter, client: String): UIO[RateLimiter.Decision] =
+    limiter
+      .acquire(client)
+      .timeoutFail(RuntimeException(s"no answer within $LimiterTimeout"))(LimiterTimeout)
+      .foldCauseZIO(
+        cause =>
+          ZIO.logWarningCause("rate limiter unavailable; request let through", cause) *>
+            GateMetrics.rateLimit("unavailable").as(RateLimiter.Decision.Allowed),
+        ZIO.succeed(_),
+      )
+
+  private def unauthorized(reason: String): Response =
+    Response
+      .json(ApiError.Unauthorized(reason).toJson)
+      .status(Status.Unauthorized)
+      .addHeader(Header.WWWAuthenticate.Bearer(realm = "map-event-pipeline"))
 
   private def tooManyRequests(retryAfter: Duration): Response =
     Response

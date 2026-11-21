@@ -38,6 +38,7 @@ object GateTelemetrySpec extends ZIOSpecDefault:
               GateRoutesSpec.StubResolution,
               GateRoutesSpec.StubQuery(calls),
               GateRoutesSpec.NoFeed,
+              ApiKeys.open,
               RateLimiter.unlimited,
               tracing,
             )

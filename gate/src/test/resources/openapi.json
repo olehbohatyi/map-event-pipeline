@@ -416,6 +416,24 @@
           "error"
         ],
         "type" : "object"
+      },
+      "Unauthorized" : {
+        "properties" : {
+          "error" : {
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "error"
+        ],
+        "type" : "object"
+      }
+    },
+    "securitySchemes" : {
+      "apiKey" : {
+        "description" : "An API key from the gate's operator, as a bearer token.\n\n",
+        "scheme" : "bearer",
+        "type" : "http"
       }
     }
   },
@@ -483,6 +501,17 @@
               }
             }
           },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Unauthorized",
+                  "description" : "No API key, or one the gate does not know. Send `Authorization: Bearer <key>`.\n\n"
+                }
+              }
+            },
+            "description" : "No API key, or one the gate does not know. Send `Authorization: Bearer <key>`.\n\n"
+          },
           "409" : {
             "content" : {
               "application/json" : {
@@ -499,11 +528,11 @@
               "application/json" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/TooManyRequests",
-                  "description" : "Too many events from this client address in the current window. `Retry-After` gives the seconds until the next window.\n\n"
+                  "description" : "Too many events from this client (its API key, or its address when no key is required) in the current window. `Retry-After` gives the seconds until the next window.\n\n"
                 }
               }
             },
-            "description" : "Too many events from this client address in the current window. `Retry-After` gives the seconds until the next window.\n\n"
+            "description" : "Too many events from this client (its API key, or its address when no key is required) in the current window. `Retry-After` gives the seconds until the next window.\n\n"
           },
           "500" : {
             "content" : {
@@ -514,7 +543,12 @@
               }
             }
           }
-        }
+        },
+        "security" : [
+          {
+            "apiKey" : []
+          }
+        ]
       }
     },
     "/api/v1/events/live" : {
@@ -757,6 +791,17 @@
             },
             "description" : "The request was published; the pipe marks the event `Resolved` shortly. It then leaves the nearby and recent lists and the live map, which receives it once more with its new status.\n\n"
           },
+          "401" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Unauthorized",
+                  "description" : "No API key, or one the gate does not know. Send `Authorization: Bearer <key>`.\n\n"
+                }
+              }
+            },
+            "description" : "No API key, or one the gate does not know. Send `Authorization: Bearer <key>`.\n\n"
+          },
           "404" : {
             "content" : {
               "application/json" : {
@@ -784,11 +829,11 @@
               "application/json" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/TooManyRequests",
-                  "description" : "Too many submissions from this client address in the current window (shared with event submissions).\n\n"
+                  "description" : "Too many submissions from this client in the current window (shared with event submissions).\n\n"
                 }
               }
             },
-            "description" : "Too many submissions from this client address in the current window (shared with event submissions).\n\n"
+            "description" : "Too many submissions from this client in the current window (shared with event submissions).\n\n"
           },
           "500" : {
             "content" : {
@@ -799,7 +844,12 @@
               }
             }
           }
-        }
+        },
+        "security" : [
+          {
+            "apiKey" : []
+          }
+        ]
       }
     },
     "/api/v1/health" : {

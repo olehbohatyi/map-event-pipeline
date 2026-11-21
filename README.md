@@ -19,7 +19,7 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 |---|---|
 | **Stack** | Scala 3, ZIO 2, zio-http, zio-kafka, Quill, Kafka / Redpanda, PostgreSQL + PostGIS, Redis, Spark 4, OpenTelemetry (Tempo, Prometheus, Loki, Grafana), Gatling, Docker, Helm |
 | **Performance** | CI baseline load test: 4,730 requests, 0 failed; `POST /api/v1/events` p95 18 ms; event posted → stored in Postgres p95 294 ms ([load testing](#load-testing-gatling)) |
-| **Tests** | 149 tests, 34 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
+| **Tests** | 157 tests, 34 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
 | **Process** | 26 pull requests, each green in CI before merge; every phase began with a spike whose findings are in [docs/decisions.md](docs/decisions.md) |
 
 ## Highlights
@@ -36,7 +36,9 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
   upserts ([hourly trends](#hourly-trends-spark-structured-streaming)).
 - **Live map**: server-sent events from Kafka to a Leaflet page ([live map](#live-map)).
 - **OpenAPI** generated from the same zio-http endpoints that serve the API, guarded by a golden-file test.
-- **Rate limiting** per client in Redis, with one Lua script so a counter always expires, failing open when Redis
+- **API keys** for writes, stored as SHA-256 hashes only; reads, the map and the live stream stay public
+  ([API keys](#api-keys)).
+- **Rate limiting** per API key in Redis, with one Lua script so a counter always expires, failing open when Redis
   fails or hangs ([delivery guarantees](#delivery-guarantees)).
 - **Observability**: one OpenTelemetry trace from the HTTP request through Kafka to Postgres, metrics and trace-linked
   logs in Grafana ([observability](#observability-opentelemetry)).
@@ -92,12 +94,13 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
   attempt can still fail. Only a published event makes later retries duplicates. A publish waits at most 10 s for the
   broker (`KAFKA_DELIVERY_TIMEOUT`); if it fails the key is released, and if the gate dies mid-publish the pending key
   expires after 50 s instead of blocking the client for a day.
-- **Rate limit.** Each client address may submit 600 events a minute (`GATE_RATE_LIMIT_REQUESTS`,
-  `GATE_RATE_LIMIT_WINDOW_SECONDS`; 0 turns it off). More get `429` with `Retry-After` before the body is read, so
-  nothing is published. Fixed windows counted in Redis (`mep:gate:rate:*`) by one Lua script, so a counter always
-  expires: with `INCR` and `EXPIRE` sent apart, a gate stopped in between would block that client for good. If Redis
-  fails or takes over 250 ms to answer, the request goes through: a missing limit is better than a gate that accepts
-  nothing. The address is the connection's, so behind a proxy the limit belongs in the proxy.
+- **Rate limit.** Each client may submit 600 events a minute (`GATE_RATE_LIMIT_REQUESTS`,
+  `GATE_RATE_LIMIT_WINDOW_SECONDS`; 0 turns it off). A client is its API key; only when keys are not required, a
+  request without one counts against its connection address (behind a proxy, all such clients share the proxy's).
+  More get `429` with `Retry-After` before the body is read, so nothing is published. Fixed windows counted in Redis
+  (`mep:gate:rate:*`) by one Lua script, so a counter always expires: with `INCR` and `EXPIRE` sent apart, a gate
+  stopped in between would block that client for good. If Redis fails or takes over 250 ms to answer, the request goes
+  through: a missing limit is better than a gate that accepts nothing.
   `mep_rate_limit_decisions` counts the outcomes.
 - **Pipe.** At-least-once. Offsets are committed only after an event is handled. Transient failures are retried
   with backoff; if they persist, the stream stops without committing, so the record is redelivered after a restart.
@@ -213,19 +216,20 @@ Prerequisites: JDK 27, sbt **or** mill (`./mill` bootstraps itself), Docker with
 ```bash
 cp .env.example .env        # set POSTGRES_PASSWORD; COMPOSE_PROFILES=kafka or redpanda
 docker compose up -d --build
+export MEP_API_KEY=local-dev-key   # the key .env.example's GATE_API_KEYS knows; for this local stack only
 ```
 
 Try it:
 
 ```bash
-curl -i -X POST localhost:8080/api/v1/events \
+curl -i -X POST localhost:8080/api/v1/events -H "Authorization: Bearer $MEP_API_KEY" \
   -H 'Content-Type: application/json' -H 'Idempotency-Key: demo-1' \
   -d '{"eventType":"Hazard","severity":"Low","location":{"lat":50.4501,"lon":30.5234},"description":"pothole"}'
 
 curl 'localhost:8080/api/v1/events/nearby?lat=50.45&lon=30.52&radius=5&limit=20'
 
 # resolve it (the id is in the POST's answer): it leaves /nearby, /recent and the map
-curl -i -X POST localhost:8080/api/v1/events/<id>/resolve
+curl -i -X POST localhost:8080/api/v1/events/<id>/resolve -H "Authorization: Bearer $MEP_API_KEY"
 
 docker compose run --rm stat              # aggregate into map_event_stats
 curl 'localhost:8080/api/v1/stats?region=Kyiv%20City'
@@ -291,14 +295,16 @@ with init containers that wait for Postgres and Kafka. `infra.enabled` (default)
 (PostGIS), Redis and Kafka as StatefulSets for development and CI; turn it off and set `postgres.url`,
 `redis.host` and `kafka.bootstrapServers` to use real services. `lgtm.enabled` adds grafana/otel-lgtm (about 1.2 GiB
 more); without it the apps run with OpenTelemetry disabled. The Postgres password comes from `postgres.password` or
-an existing Secret (`postgres.existingSecret`) — the chart has no default.
+an existing Secret (`postgres.existingSecret`) — the chart has no default. So do the gate's API key hashes
+(`gate.auth.keys`, made with `scripts/api-key.sh`, or `gate.auth.existingSecret`): without them it does not install.
 
 ```bash
 docker build --target gate -t map-event-gate:latest . && docker build --target pipe -t map-event-pipe:latest .
 kind create cluster --name mep
 kind load docker-image map-event-gate:latest map-event-pipe:latest --name mep
-helm install mep deploy/helm/map-event-pipeline --set postgres.password=change-me --wait
-scripts/k8s-smoke.sh mep          # posts an event and waits until the pipe has stored it
+scripts/api-key.sh smoke          # prints a key and its name:hash entry
+helm install mep deploy/helm/map-event-pipeline --set postgres.password=change-me --set gate.auth.keys=smoke:<hash> --wait
+MEP_API_KEY=<key> scripts/k8s-smoke.sh mep   # posts an event and waits until the pipe has stored it
 ```
 
 CI does the same in the `k8s` job on every push. The stack without lgtm used about 2.2 GiB in a kind cluster.
@@ -309,14 +315,14 @@ CI does the same in the `k8s` job on every push. The stack without lgtm used abo
 run against a running stack:
 
 ```bash
-LOAD_PROFILE=baseline sbt -batch --server load/run   # smoke (default), baseline or stress; GATE_URL to point elsewhere
+LOAD_PROFILE=baseline MEP_API_KEY=local-dev-key sbt -batch --server load/run   # smoke (default), baseline or stress; GATE_URL to point elsewhere
 ```
 
 It mixes clients posting events (about one in ten retries a key, so duplicates take the 200 path), map clients
 querying (`nearby`, `recent`, `hourly`) and following `/live` (each must receive an event), and a probe that posts an
 event and polls `GET /api/v1/events/{id}` until it is stored — its group's duration is the end-to-end latency. The run
 fails when more than 1% of requests fail or a p95 limit is exceeded; the HTML report lands in `target/gatling`. The
-**Load test** workflow runs a profile on demand in CI and keeps the report. All of its traffic comes from one address,
+**Load test** workflow runs a profile on demand in CI and keeps the report. All of its traffic comes from one API key,
 so run the stack with `GATE_RATE_LIMIT_REQUESTS=0` for the baseline and stress profiles (the workflow does).
 
 Baseline profile (50 ingests/s, 20 queries/s, 10 live clients, 60 s) in CI, on a GitHub-hosted runner (Load test
@@ -382,7 +388,8 @@ serves it.
 `/map` is a single page (Leaflet over OpenStreetMap tiles) that loads the latest events from `/api/v1/events/recent`
 and then follows `/api/v1/events/live`, a stream of server-sent events. Markers are coloured by severity; the popup
 shows type, region, description and time, and a button that resolves the event: its marker goes once the pipe has
-closed it, and so do markers of expired events.
+closed it, and so do markers of expired events. Resolving needs an API key; a page cannot keep a secret, so it asks
+for one on the first click and keeps it in the tab's `sessionStorage` until the tab closes or the gate refuses it.
 
 - Each gate tails `map.events.enriched` (what the pipe publishes after storing an event) and `map.events.closed`
   (events it resolved or expired) with its own consumer group
@@ -402,8 +409,8 @@ closed it, and so do markers of expired events.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. `202` accepted, `200` duplicate, `409` a request with the same key is still in progress (retry it), `400` invalid, `429` over the client's rate limit (with `Retry-After`). |
-| `POST` | `/api/v1/events/{id}/resolve` | Asks the pipe to close the event as `Resolved` ([event lifecycle](#event-lifecycle)). `202` requested, `404` not stored (yet), `409` closed already, `429` over the client's rate limit (shared with event submissions). |
+| `POST` | `/api/v1/events` | Body: `eventType` (`Hazard`/`Sign`/`Traffic`), `severity` (`Low`…`Critical`), `location {lat, lon}`, optional `description`, `occurredAt` (at most 5 minutes in the future: client clocks drift, but a future date would stay first in `/recent`). Optional `Idempotency-Key` header. Needs an API key. `202` accepted, `200` duplicate, `409` a request with the same key is still in progress (retry it), `400` invalid, `401` no or unknown key, `429` over the client's rate limit (with `Retry-After`). |
+| `POST` | `/api/v1/events/{id}/resolve` | Asks the pipe to close the event as `Resolved` ([event lifecycle](#event-lifecycle)). Needs an API key. `202` requested, `404` not stored (yet), `409` closed already, `401` no or unknown key, `429` over the client's rate limit (shared with event submissions). |
 | `GET` | `/api/v1/events/nearby` | `lat`, `lon` (required), `radius` km (default 5, max 100), `limit` (default 50, max 500). Open events by exact great-circle distance, nearest first, plus the region of the query point. |
 | `GET` | `/api/v1/events/{id}` | The event once the pipe has stored it, open or closed (`status`, `closedAt`); `404` before that. |
 | `GET` | `/api/v1/events/recent` | `limit` (default 200, max 500). The latest open events by occurrence time, newest first. |
@@ -413,6 +420,19 @@ closed it, and so do markers of expired events.
 | `GET` | `/api/v1/health` | Liveness. |
 | `GET` | `/docs/openapi` | Swagger UI over the generated OpenAPI 3.1 document. |
 | `GET` | `/map` | The live map. |
+
+#### API keys
+
+Writes (`POST /api/v1/events`, `POST /api/v1/events/{id}/resolve`) need `Authorization: Bearer <key>`; everything
+else, the map page and the live stream included, is public. Keys are handed to clients; the gate holds only their
+SHA-256 hashes, as comma-separated `name:hash` pairs in `GATE_API_KEYS` (`scripts/api-key.sh <name>` makes a key and
+its pair), so a leaked configuration gives no one a key. A request's key is hashed and looked up, which tells a
+timing attacker nothing about any key. The name identifies the client for the rate limit, never a metric label
+(`mep_auth_decisions` counts granted, open and denied). Without keys and with `GATE_AUTH_REQUIRED=true` (the
+default) the gate does not start; `GATE_AUTH_REQUIRED=false` lets writes through without a key, though a key that is
+sent is still checked. Refused requests get `401` with `WWW-Authenticate: Bearer` before the rate limit, the body or
+Kafka are touched. Rotating a key means adding the new pair, handing out the key, then removing the old pair. The
+OpenAPI document declares the scheme on both writes.
 
 Every error body is `{"error": "..."}`, whatever the client's `Accept` header asks for: `400` for invalid input
 (including unreadable JSON, an unknown enum value or a malformed query parameter) and `500` `{"error":"internal"}` for

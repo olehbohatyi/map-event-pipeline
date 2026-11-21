@@ -7,16 +7,23 @@ import io.gatling.javaapi.core.CoreDsl.*
 import io.gatling.javaapi.core.Simulation
 import io.gatling.javaapi.http.HttpDsl.*
 
-/** Traffic against a running stack (GATE_URL, default http://localhost:8080): clients posting events, map clients
-  * querying and following the live stream, and a probe timing how long an event takes from POST to stored. Written with
-  * Gatling's Java DSL, which works from Scala 3 (its Scala DSL is built for 2.13).
+/** Traffic against a running stack (GATE_URL, default http://localhost:8080; MEP_API_KEY for writes): clients posting
+  * events, map clients querying and following the live stream, and a probe timing how long an event takes from POST to
+  * stored. Written with Gatling's Java DSL, which works from Scala 3 (its Scala DSL is built for 2.13).
   */
 final class LoadSimulation extends Simulation:
 
   private val profile = LoadProfile.fromEnv(sys.env)
   private val gateUrl = sys.env.getOrElse("GATE_URL", "http://localhost:8080")
 
-  private val protocol = http.baseUrl(gateUrl).acceptHeader("application/json").contentTypeHeader("application/json")
+  // Writes need an API key (MEP_API_KEY, as in .env); reads send it too, which the gate ignores
+  private val apiKey = sys.env.getOrElse("MEP_API_KEY", "")
+
+  private val protocol = http
+    .baseUrl(gateUrl)
+    .acceptHeader("application/json")
+    .contentTypeHeader("application/json")
+    .authorizationHeader(s"Bearer $apiKey")
 
   private val ingest = scenario("ingest")
     .feed(Events.feeder)

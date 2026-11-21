@@ -83,6 +83,12 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   `COMPOSE_PROFILES=kafka,stat docker compose …`.
 - Quill 4.8 pulls zio-json 0.7; it is excluded in both builds because zio-json 1.x is used. Import Quill's
   `SnakeCase` explicitly — zio-json 1.x exports one too.
+- API keys: writes go through `GateRoutes.guarded` (key check, then the rate limit, keyed `key:<name>` or
+  `ip:<addr>` when keys are not required). `ApiKeys` holds `name:sha256` pairs from `GATE_API_KEYS`, never keys; the
+  gate does not start without keys unless `GATE_AUTH_REQUIRED=false`. Don't use zio-http's `Endpoint.auth`: it
+  demands a bearer header even when keys are off; `GateApi.openApi` adds the security scheme to every POST by hand.
+  Clients need `MEP_API_KEY` (load test, `k8s-smoke.sh`); compose's local key is in `.env.example`, CI's in `ci.yml`.
+  Route tests use `ApiKeys.open`, or `GateRoutesSpec.keys` to test the guard.
 - Gate idempotency keys (`mep:gate:idem:*`), rate limit counters (`mep:gate:rate:*`) and pipe processed ids
   (`mep:pipe:processed:*`) must stay in separate Redis keyspaces. The rate limit (`GateRoutes.limited`, POST events
   only) counts and sets the expiry in one Lua script and lets requests through if Redis fails; the load test turns it

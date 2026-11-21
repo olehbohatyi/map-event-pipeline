@@ -13,6 +13,7 @@ data:
   GATE_PORT: {{ .Values.gate.port | quote }}
   GATE_RATE_LIMIT_REQUESTS: {{ .Values.gate.rateLimit.requests | quote }}
   GATE_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.gate.rateLimit.windowSeconds | quote }}
+  GATE_AUTH_REQUIRED: {{ .Values.gate.auth.required | quote }}
   {{- if .Values.lgtm.enabled }}
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://{{ include "mep.fullname" . }}-lgtm:4318"
   OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
@@ -29,4 +30,19 @@ metadata:
 type: Opaque
 stringData:
   POSTGRES_PASSWORD: {{ required "set postgres.password or postgres.existingSecret" .Values.postgres.password | quote }}
+{{- end }}
+{{- if not .Values.gate.auth.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "mep.gateKeysSecret" . }}
+  labels: {{- include "mep.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{- if .Values.gate.auth.required }}
+  GATE_API_KEYS: {{ required "set gate.auth.keys (scripts/api-key.sh), gate.auth.existingSecret, or gate.auth.required=false" .Values.gate.auth.keys | quote }}
+  {{- else }}
+  GATE_API_KEYS: {{ .Values.gate.auth.keys | quote }}
+  {{- end }}
 {{- end }}

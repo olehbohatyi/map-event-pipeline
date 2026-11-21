@@ -86,10 +86,15 @@ jobs:
       - name: Load images and install the chart
         run: |
           kind load docker-image map-event-gate:latest map-event-pipe:latest --name mep
-          helm lint deploy/helm/map-event-pipeline --set postgres.password=ci
-          helm install mep deploy/helm/map-event-pipeline --set postgres.password=ci --wait --timeout 10m
+          # The hash of the smoke test's key, ci-smoke-key
+          keys=ci:bbddd8afc9718d7462570c5923f7533c1eba3b35e8c8e820ab31857416ec01ad
+          helm lint deploy/helm/map-event-pipeline --set postgres.password=ci --set gate.auth.keys=$keys
+          helm install mep deploy/helm/map-event-pipeline --set postgres.password=ci --set gate.auth.keys=$keys \
+            --wait --timeout 10m
       - name: Smoke test
         run: scripts/k8s-smoke.sh mep
+        env:
+          MEP_API_KEY: ci-smoke-key
       - name: Show the cluster on failure
         if: failure()
         run: |
