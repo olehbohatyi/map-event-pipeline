@@ -65,8 +65,11 @@ jobs:
 
   # The build's resolved dependencies go to GitHub's dependency graph (Dependabot alerts read it). sbt has no manifest
   # GitHub can parse, so the graph comes from sbt itself. A job of its own: sbt 2 hands commands to a running server,
-  # and one started by an earlier step lacks the GITHUB_TOKEN the submission needs.
+  # and one started by an earlier step lacks the GITHUB_TOKEN the submission needs. Its token can write contents while
+  # sbt runs the branch's build code, so keep it apart from the other jobs; a fork's pull request gets no write token
+  # and skips it.
   dependencies:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -141,7 +144,10 @@ jobs:
           fail-build: ${{ matrix.fail }}
           cache-db: true
       - name: Report to code scanning
-        if: ${{ !cancelled() && steps.scan.outputs.sarif != '' }}
+        # A fork's pull request cannot upload; the scan above still fails it
+        if: >-
+          ${{ !cancelled() && steps.scan.outputs.sarif != '' && (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}

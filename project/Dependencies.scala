@@ -47,7 +47,8 @@ object Dependencies {
   val zioKafka            = "dev.zio" %% "zio-kafka"             % Versions.zioKafka
   val zioHttp             = "dev.zio" %% "zio-http"              % Versions.zioHttp
   // zio-http depends on netty-pkitesting at compile scope, which brings BouncyCastle into the gate; 1.84 has a critical
-  // vulnerability (GHSA-9pwp-9qqc-pr26), so the gate asks for a fixed release itself
+  // vulnerability (GHSA-9pwp-9qqc-pr26), so the gate asks for a fixed release itself. Drop these once zio-http brings
+  // a fixed one (`gate/whatDependsOn org.bouncycastle bcprov-jdk18on`)
   val bouncyCastle        = Seq(
     "org.bouncycastle" % "bcprov-jdk18on" % Versions.bouncycastle,
     "org.bouncycastle" % "bcpkix-jdk18on" % Versions.bouncycastle,
