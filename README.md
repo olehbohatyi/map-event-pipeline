@@ -494,6 +494,22 @@ scripts/verify.sh           # formatting, compile, unit + integration tests, mil
 scripts/verify.sh --quick   # formatting, compile, unit tests
 ```
 
+### Supply chain
+
+- **Pinned actions**: every GitHub Action runs at a commit SHA (version in a comment), so a moved or hijacked tag
+  cannot change what CI runs. Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) updates the pins in
+  one weekly PR; Scala Steward updates the build's dependencies.
+- **Least privilege**: each workflow's token is read-only; only the jobs that post statuses, submit the dependency
+  graph or upload scan results ask for more.
+- **Dependency graph**: sbt has no manifest GitHub can read, so CI submits the resolved graph of every module
+  ([sbt-dependency-submission](https://github.com/scalacenter/sbt-dependency-submission)), which is what Dependabot
+  alerts work from.
+- **Dependency review**: a change (Steward's included) that adds a dependency with a known high or critical
+  vulnerability fails CI.
+- **Images**: each image gets a CycloneDX SBOM (kept as a run artifact) and a [grype](https://github.com/anchore/grype)
+  scan, reported to code scanning. A critical vulnerability with a fix available fails the gate or pipe image; the
+  stat image is Apache's Spark image, so its scan only reports.
+
 ## Built with Claude Code
 
 This project is developed together with [Claude Code](https://claude.com/claude-code). The workflow is part of the

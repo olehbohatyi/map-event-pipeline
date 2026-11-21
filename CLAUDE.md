@@ -35,6 +35,12 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
 - Commits: single-line Conventional Commits (`feat(gate): …`, `fix(pipe): …`), no body, no co-author trailer.
   One branch + PR per phase; CI must be green before merge.
 - Versions live in **both** `project/Dependencies.scala` and `build.mill`; change them together.
+- Workflows: every action is pinned by commit SHA with its version in a comment (Dependabot updates both, grouped;
+  Steward does not touch actions) and every workflow starts with a read-only token, jobs asking for more. CI's
+  `dependencies` job submits sbt's graph to GitHub in a job of its own (an sbt 2 server started by an earlier step
+  lacks `GITHUB_TOKEN`); `dependency-review` compares the PR's *merge* commit (`github.sha`, where that snapshot is
+  filed) with its base, or with `main` on a dispatched run. The `docker` job writes a CycloneDX SBOM of each image and
+  scans it with grype.
 - Scala Steward opens its PRs with `GITHUB_TOKEN`, so their `pull_request` CI run waits for approval and never starts;
   its workflow dispatches `ci.yml` on each new head commit instead. A dispatch runs the branch's own `ci.yml`, so
   Steward rebases its PRs whenever main moves (`updatePullRequests = "always"`); a push of ours stops that. A

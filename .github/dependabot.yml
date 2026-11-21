@@ -1,0 +1,14 @@
+# Scala Steward updates the build's dependencies; Dependabot keeps the workflows' actions current. Actions are pinned
+# by commit SHA (a moved tag cannot change what runs), so it updates the SHA and the version comment beside it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
