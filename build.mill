@@ -27,6 +27,7 @@ object V {
   val spark      = "4.3.0"
   val testcont   = "2.0.5"
   val gatling    = "3.16.1"
+  val bouncycastle = "1.87"
 }
 
 // sbt/Maven directory layout (src/main/scala, src/test/scala), shared with the sbt build
@@ -85,7 +86,13 @@ object core extends MepModule {
 
 object gate extends MepModule {
   def moduleDeps = Seq(core)
-  def mvnDeps    = Seq(mvn"dev.zio::zio-http:${V.zioHttp}")
+  // A fixed BouncyCastle over the 1.84 that zio-http's netty-pkitesting brings (GHSA-9pwp-9qqc-pr26)
+  def mvnDeps = Seq(
+    mvn"dev.zio::zio-http:${V.zioHttp}",
+    mvn"org.bouncycastle:bcprov-jdk18on:${V.bouncycastle}",
+    mvn"org.bouncycastle:bcpkix-jdk18on:${V.bouncycastle}",
+    mvn"org.bouncycastle:bcutil-jdk18on:${V.bouncycastle}",
+  )
   def mainClass  = Some("com.github.olehbohatyi.mep.gate.GateApp")
   object test extends MepTests {
     def moduleDeps = super.moduleDeps ++ Seq(core.test)
