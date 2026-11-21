@@ -74,7 +74,8 @@ object GateTelemetrySpec extends ZIOSpecDefault:
   private def get(path: String): ZIO[Tracing, Nothing, Response] =
     run(Request.get(URL.decode(path).toOption.get))
 
-  private val eventRoute = "/api/v1/events/{id}"
+  private val eventRoute   = "/api/v1/events/{id}"
+  private val resolveRoute = s"$eventRoute/resolve"
 
   def spec = suite("Gate telemetry")(
     test("a request continues the caller's trace in a server span that records the status") {
@@ -158,6 +159,7 @@ object GateTelemetrySpec extends ZIOSpecDefault:
         "/api/v1/events",
         "/api/v1/events/nearby",
         eventRoute,
+        resolveRoute,
         "/api/v1/events/recent",
         "/api/v1/events/live",
         "/api/v1/stats",
@@ -169,8 +171,11 @@ object GateTelemetrySpec extends ZIOSpecDefault:
       )
       for
         _       <-
-          ZIO.foreachDiscard(routes.filterNot(_ == "unmatched"))(p => get(p.replace("{id}", UUID.randomUUID.toString)))
+          ZIO.foreachDiscard(routes -- Set("unmatched", resolveRoute))(p =>
+            get(p.replace("{id}", UUID.randomUUID.toString))
+          )
         _       <- run(post("labels"))
+        _       <- run(Request.post(URL(Path.decode(s"/api/v1/events/${UUID.randomUUID}/resolve")), Body.empty))
         _       <- get("/api/v1/events/not-a-uuid")
         _       <- run(Request(method = Method.CUSTOM("BREW"), url = URL(Path.decode("/api/v1/health"))))
         _       <- run(Request(method = Method.CUSTOM("BREW"), url = URL(Path.decode("/coffee"))))
