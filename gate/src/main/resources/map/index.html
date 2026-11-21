@@ -82,14 +82,39 @@
     const resolve = document.createElement("button");
     resolve.textContent = "Resolve";
     resolve.onclick = () => {
+      const key = apiKey();
+      if (key === null) return;
       resolve.disabled = true;
-      fetch(`/api/v1/events/${encodeURIComponent(e.id)}/resolve`, { method: "POST" })
+      fetch(`/api/v1/events/${encodeURIComponent(e.id)}/resolve`, {
+        method: "POST",
+        headers: key ? { "Authorization": `Bearer ${key}` } : {},
+      })
         // The marker goes once the pipe has closed the event and the stream delivers it
-        .then(r => { resolve.textContent = r.status === 202 ? "Resolving…" : `Failed (${r.status})`; })
+        .then(r => {
+          if (r.status === 401) { forgetApiKey(); resolve.textContent = "Resolve (key refused)"; resolve.disabled = false; }
+          else resolve.textContent = r.status === 202 ? "Resolving…" : `Failed (${r.status})`;
+        })
         .catch(() => { resolve.textContent = "Failed"; resolve.disabled = false; });
     };
     div.append(document.createElement("br"), resolve);
     return div;
+  }
+
+  // Resolving is a write and needs an API key. A page cannot keep a secret, so the user types the key once per tab;
+  // it stays in this tab's sessionStorage (gone when the tab closes) and is sent only to this gate. null: cancelled
+  const KeyItem = "mep-api-key";
+  function apiKey() {
+    let key = null;
+    try { key = sessionStorage.getItem(KeyItem); } catch (_) { /* storage blocked: ask every time */ }
+    if (key !== null) return key;
+    key = window.prompt("API key for resolving events (empty if the gate does not require one):", "");
+    if (key === null) return null;
+    key = key.trim();
+    try { sessionStorage.setItem(KeyItem, key); } catch (_) { /* storage blocked */ }
+    return key;
+  }
+  function forgetApiKey() {
+    try { sessionStorage.removeItem(KeyItem); } catch (_) { /* storage blocked */ }
   }
 
   function remove(id) {

@@ -10,9 +10,17 @@ gate:
     limits: {memory: 768Mi}
   # The JVM's default heap is 25% of the memory limit; give it most of the container, as in compose
   javaOpts: -XX:MaxRAMPercentage=70
-  # Event submissions per client address per window (0 turns it off). Counted per connection address: behind an
-  # ingress or load balancer every client shares its address, so limit there instead
+  # Event submissions per client per window (0 turns it off). Counted per API key, or per connection address for a
+  # request without one (only when keys are not required): behind an ingress every such client shares its address
   rateLimit: {requests: 600, windowSeconds: 60}
+  # Writes (POST events, resolve) need an API key. `keys` holds comma-separated name:sha256-hex pairs, made with
+  # scripts/api-key.sh (the chart keeps hashes, never keys), and goes into a Secret; or name an existing Secret with a
+  # GATE_API_KEYS key. With `required` and no keys the chart does not install. Behind an ingress, keys also tell the
+  # rate limit's clients apart (it counts per key)
+  auth:
+    required: true
+    keys: ""
+    existingSecret: ""
 
 pipe:
   image: map-event-pipe:latest

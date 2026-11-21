@@ -67,6 +67,22 @@ object OpenApiSpec extends ZIOSpecDefault:
         )
       )
     },
+    // The key is checked outside the endpoints, so the generator knows nothing of it: the document must still say so
+    test("declares the API key scheme, required by every write and by nothing else") {
+      def obj(json: Json, key: String) = json.asObject.flatMap(_.get(key))
+      val paths                        = obj(generated, "paths").flatMap(_.asObject).map(_.fields.toList).getOrElse(Nil)
+      val ops                          = for
+        (path, item) <- paths
+        (method, op) <- item.asObject.map(_.fields.toList).getOrElse(Nil)
+      yield (s"${method.toUpperCase} $path", obj(op, "security").isDefined)
+      val keyed                        = ops.collect { case (op, true) => op }.toSet
+      val scheme                       =
+        obj(generated, "components").flatMap(obj(_, "securitySchemes")).flatMap(obj(_, GateApi.SecurityScheme))
+      assertTrue(
+        keyed == Set("POST /api/v1/events", "POST /api/v1/events/{id}/resolve"),
+        scheme.flatMap(obj(_, "scheme")).contains(Json.Str("bearer")),
+      )
+    },
     // Regression: the generator referred to a ServerSentEvent schema for the live stream without writing one
     test("every $ref points at a schema the document defines") {
       val defined =

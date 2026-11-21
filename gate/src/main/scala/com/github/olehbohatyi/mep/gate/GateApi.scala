@@ -71,10 +71,14 @@ object GateApi:
           "Another request with this Idempotency-Key is still being published, or has just failed to be. Nothing is " +
             "known to be published yet: retry the request."
         ),
-        // Answered by GateRoutes.limited before the request is read; declared here for the document
+        // Answered by GateRoutes.guarded before the request is read; declared here for the document
+        HttpCodec.error[ApiError.Unauthorized](Status.Unauthorized) ?? Doc.p(
+          "No API key, or one the gate does not know. Send `Authorization: Bearer <key>`."
+        ),
+        // Answered by GateRoutes.guarded before the request is read; declared here for the document
         HttpCodec.error[ApiError.TooManyRequests](Status.TooManyRequests) ?? Doc.p(
-          "Too many events from this client address in the current window. `Retry-After` gives the seconds until " +
-            "the next window."
+          "Too many events from this client (its API key, or its address when no key is required) in the current " +
+            "window. `Retry-After` gives the seconds until the next window."
         ),
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
@@ -93,9 +97,13 @@ object GateApi:
         HttpCodec.error[ApiError.NotFound](Status.NotFound) ?? Doc.p("No stored event with this id (yet)."),
         HttpCodec.error[ApiError.Conflict](Status.Conflict) ?? Doc
           .p("The event is closed already: resolved or expired."),
-        // Answered by GateRoutes.limited before the request is read; declared here for the document
+        // Answered by GateRoutes.guarded before the request is read; declared here for the document
+        HttpCodec.error[ApiError.Unauthorized](Status.Unauthorized) ?? Doc.p(
+          "No API key, or one the gate does not know. Send `Authorization: Bearer <key>`."
+        ),
+        // Answered by GateRoutes.guarded before the request is read; declared here for the document
         HttpCodec.error[ApiError.TooManyRequests](Status.TooManyRequests) ?? Doc.p(
-          "Too many submissions from this client address in the current window (shared with event submissions)."
+          "Too many submissions from this client in the current window (shared with event submissions)."
         ),
         HttpCodec.error[ApiError.Internal](Status.InternalServerError),
       )
@@ -178,6 +186,9 @@ object GateApi:
 
   val endpoints = List(health, ingest, resolve, nearby, event, recent, live, stats, hourly)
 
+  // The name of the API key scheme in the OpenAPI document (before openApi, which reads it as the object initialises)
+  val SecurityScheme = "apiKey"
+
   val openApi: OpenAPI =
     val generated = OpenAPIGen.fromEndpoints("Map Event Pipeline API", "1.0.0", endpoints.head, endpoints.tail*)
     // The generator refers to a ServerSentEvent schema for the live stream but never writes one
@@ -186,4 +197,18 @@ object GateApi:
         .ReferenceOr
         .Or(JsonSchema.fromZSchema(ServerSentEvent.schema[String], SchemaRef(SchemaSpec.OpenAPI, SchemaStyle.Inline)))
     val comps     = generated.components.getOrElse(OpenAPI.Components())
-    generated.copy(components = Some(comps.copy(schemas = comps.schemas + sse)))
+    // The key is checked by GateRoutes.guarded, not by the endpoints (an endpoint's own auth would demand a key even
+    // when the gate is configured not to), so the document gets the scheme here. Every POST is a write that needs it
+    val scheme    = OpenAPI.Key.fromString(SecurityScheme).get    -> OpenAPI
+      .ReferenceOr
+      .Or(
+        OpenAPI
+          .SecurityScheme
+          .Http(Some(Doc.p("An API key from the gate's operator, as a bearer token.")), "bearer", None)
+      )
+    val keyed     = List(OpenAPI.SecurityScheme.SecurityRequirement(Map(SecurityScheme -> Nil)))
+    val paths     = generated.paths.map((path, item) => path -> item.copy(post = item.post.map(_.copy(security = keyed))))
+    generated.copy(
+      paths = paths,
+      components = Some(comps.copy(schemas = comps.schemas + sse, securitySchemes = comps.securitySchemes + scheme)),
+    )

@@ -13,6 +13,8 @@ object AppConfigSpec extends ZIOSpecDefault:
       yield assertTrue(
         cfg.http.port == 8080,
         cfg.http.rateLimit == RateLimitConfig(600, 60),
+        // Keys are required by default, and none ship with the code
+        cfg.http.auth == AuthConfig(required = true, keys = ""),
         cfg.kafka.topics.raw == "map.events.raw",
         cfg.kafka.consumerGroup == "mep-pipe",
         cfg.kafka.topics.dlq == "map.events.dlq",

@@ -193,6 +193,9 @@ services:
       GATE_PORT: "8080"
       GATE_RATE_LIMIT_REQUESTS: ${GATE_RATE_LIMIT_REQUESTS:-600}
       GATE_RATE_LIMIT_WINDOW_SECONDS: ${GATE_RATE_LIMIT_WINDOW_SECONDS:-60}
+      # No default key: without GATE_API_KEYS (see .env.example) the gate refuses to start
+      GATE_API_KEYS: ${GATE_API_KEYS:-}
+      GATE_AUTH_REQUIRED: ${GATE_AUTH_REQUIRED:-true}
       JAVA_OPTS: -XX:MaxRAMPercentage=70
 
   pipe:

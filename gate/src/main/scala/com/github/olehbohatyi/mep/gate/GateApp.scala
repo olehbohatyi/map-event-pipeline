@@ -31,6 +31,7 @@ object GateApp extends ZIOApp:
       IdempotencyCache.live(IngestionService.Namespace),
       ZLayer.fromFunction((http: HttpConfig) => http.rateLimit),
       RateLimiter.live,
+      ApiKeys.live,
       GeoCache.live,
       RegionRepo.live,
       RegionResolver.live,
@@ -41,8 +42,8 @@ object GateApp extends ZIOApp:
     )
 
   private val program: RIO[
-    IngestionService & ResolutionService & QueryService & LiveFeed & RateLimiter & Tracing & HttpConfig & KafkaConfig &
-      PostgresConfig,
+    IngestionService & ResolutionService & QueryService & LiveFeed & ApiKeys & RateLimiter & Tracing & HttpConfig &
+      KafkaConfig & PostgresConfig,
     Unit,
   ] =
     for
@@ -53,13 +54,15 @@ object GateApp extends ZIOApp:
       resolution <- ZIO.service[ResolutionService]
       query      <- ZIO.service[QueryService]
       feed       <- ZIO.service[LiveFeed]
+      keys       <- ZIO.service[ApiKeys]
       limiter    <- ZIO.service[RateLimiter]
       tracing    <- ZIO.service[Tracing]
       _          <- ZIO.logInfo(s"Gate listening on ${cfg.host}:${cfg.port}")
+      _          <- ZIO.logWarning("API keys are not required: anyone can write").unless(keys.required)
       // Ending the live streams first lets the server's graceful shutdown finish the remaining requests quickly;
       // otherwise it waits out its timeout on the endless streams (and `docker stop` kills the gate meanwhile)
       _          <- Server
-                      .serve(GateRoutes(ingestion, resolution, query, feed, limiter, tracing))
+                      .serve(GateRoutes(ingestion, resolution, query, feed, keys, limiter, tracing))
                       .ensuring(feed.close)
                       .provide(Server.defaultWith(_.binding(cfg.host, cfg.port)))
     yield ()

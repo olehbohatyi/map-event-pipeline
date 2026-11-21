@@ -2,6 +2,7 @@ The gate answers on service {{ include "mep.fullname" . }}-gate, port {{ .Values
 
   kubectl port-forward svc/{{ include "mep.fullname" . }}-gate 8080:{{ .Values.gate.port }}
   curl localhost:8080/api/v1/health      # then open http://localhost:8080/map
+  # writes need one of the keys behind gate.auth.keys: -H "Authorization: Bearer <key>"
 {{- if .Values.lgtm.enabled }}
 
 Grafana: kubectl port-forward svc/{{ include "mep.fullname" . }}-lgtm 3000:3000

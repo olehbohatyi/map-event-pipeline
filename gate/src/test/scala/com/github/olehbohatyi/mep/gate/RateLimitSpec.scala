@@ -26,7 +26,7 @@ object RateLimitSpec extends ZIOSpecDefault:
     def post(from: String): UIO[Response]               =
       send(Request.post(URL(Path.decode("/api/v1/events")), Body.fromString(body)), from)
 
-  private def gate(limit: Int): URIO[Tracing, Gate] =
+  private def gate(limit: Int, keys: ApiKeys = ApiKeys.open): URIO[Tracing, Gate] =
     for
       tracing  <- ZIO.service[Tracing]
       ingested <- Ref.make(0)
@@ -37,6 +37,7 @@ object RateLimitSpec extends ZIOSpecDefault:
                     GateRoutesSpec.StubResolution,
                     GateRoutesSpec.StubQuery(calls),
                     GateRoutesSpec.NoFeed,
+                    keys,
                     limiter,
                     tracing,
                   )
@@ -66,7 +67,7 @@ object RateLimitSpec extends ZIOSpecDefault:
         other.status == Status.Accepted,
         // The limited request never reached the ingestion service
         ingested == 3,
-        seen == Map("10.0.0.1" -> 3, "10.0.0.2" -> 1),
+        seen == Map("ip:10.0.0.1" -> 3, "ip:10.0.0.2" -> 1),
         limited1 - limited0 >= 1L,
       )
     },
@@ -84,7 +85,28 @@ object RateLimitSpec extends ZIOSpecDefault:
         refused.status == Status.TooManyRequests,
         health.status == Status.Ok,
         recent.status == Status.Ok,
-        seen == Map("10.0.0.1" -> 2),
+        seen == Map("ip:10.0.0.1" -> 2),
+      )
+    },
+    // Behind a proxy every client has the proxy's address; a key tells them apart
+    test("counts each API key on its own, whatever address it comes from; a refused request is not counted") {
+      def post(key: String) =
+        Request
+          .post(URL(Path.decode("/api/v1/events")), Body.fromString(body))
+          .addHeader("Authorization", s"Bearer $key")
+      for
+        g       <- gate(limit = 1, keys = GateRoutesSpec.keys)
+        alice   <- g.send(post(GateRoutesSpec.AliceKey), "10.0.0.1")
+        bob     <- g.send(post(GateRoutesSpec.BobKey), "10.0.0.1")
+        again   <- g.send(post(GateRoutesSpec.AliceKey), "10.0.0.2")
+        unknown <- g.send(post("not-a-key"), "10.0.0.1")
+        seen    <- g.limiter.seen
+      yield assertTrue(
+        alice.status == Status.Accepted,
+        bob.status == Status.Accepted,
+        again.status == Status.TooManyRequests,
+        unknown.status == Status.Unauthorized,
+        seen == Map("key:alice" -> 2, "key:bob" -> 1),
       )
     },
     test("lets requests through when the limiter fails, rather than refusing every event") {

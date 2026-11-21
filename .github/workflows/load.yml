@@ -31,7 +31,8 @@ jobs:
           for i in $(seq 1 90); do curl -sf localhost:8080/api/v1/health && break; sleep 2; done
           curl -sf localhost:8080/api/v1/health || { echo "gate never became healthy"; docker compose logs; exit 1; }
       - name: Gatling
-        run: sbt -batch --server load/run
+        # The key behind .env's local GATE_API_KEYS entry
+        run: MEP_API_KEY=$(sed -n 's/^MEP_API_KEY=//p' .env) sbt -batch --server load/run
         env:
           LOAD_PROFILE: ${{ inputs.profile }}
       - name: Keep the report

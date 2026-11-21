@@ -11,6 +11,7 @@ import java.time.Instant
 import java.util.UUID
 
 import com.github.olehbohatyi.mep.caches.RateLimiter
+import com.github.olehbohatyi.mep.config.AuthConfig
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.stores.{ MapEventStat, MapEventTrend }
 import com.github.olehbohatyi.mep.testkit.{ Samples, TestTelemetry }
@@ -61,6 +62,14 @@ object GateRoutesSpec extends ZIOSpecDefault:
     def subscribers: UIO[Int]                                                 = ZIO.succeed(0)
     def close: UIO[Unit]                                                      = ZIO.unit
 
+  // Two clients' keys; the gate holds only their hashes
+  val AliceKey      = "alice-secret-key"
+  val BobKey        = "bob-secret-key"
+  val keys: ApiKeys =
+    ApiKeys
+      .fromConfig(AuthConfig(required = true, s"alice:${ApiKeys.hash(AliceKey)},bob:${ApiKeys.hash(BobKey)}"))
+      .fold(err => throw IllegalArgumentException(err), identity)
+
   private val validBody =
     """{"eventType":"Hazard","severity":"High","location":{"lat":50.45,"lon":30.52},"description":"ice"}"""
 
@@ -70,9 +79,31 @@ object GateRoutesSpec extends ZIOSpecDefault:
       tracing <- ZIO.service[Tracing]
       res     <-
         ZIO.scoped {
-          GateRoutes(StubIngestion, StubResolution, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing)
+          GateRoutes(
+            StubIngestion,
+            StubResolution,
+            StubQuery(calls),
+            NoFeed,
+            ApiKeys.open,
+            RateLimiter.unlimited,
+            tracing,
+          )
             .runZIO(req)
             .flatMap(r => r.body.asString.orDie.map(r.status -> _))
+        }
+    yield res
+
+  // Through a gate that requires keys: status, body and the WWW-Authenticate header
+  private def callKeyed(req: Request)
+      : ZIO[Ref[List[(GeoPoint, Double, Int)]] & Tracing, Nothing, (Status, String, Option[String])] =
+    for
+      calls   <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
+      tracing <- ZIO.service[Tracing]
+      res     <-
+        ZIO.scoped {
+          GateRoutes(StubIngestion, StubResolution, StubQuery(calls), NoFeed, keys, RateLimiter.unlimited, tracing)
+            .runZIO(req)
+            .flatMap(r => r.body.asString.orDie.map((r.status, _, r.rawHeader("WWW-Authenticate"))))
         }
     yield res
 
@@ -102,6 +133,38 @@ object GateRoutesSpec extends ZIOSpecDefault:
           b == "{\"error\":\"a request with this Idempotency-Key is still being processed; retry it\"}",
         )
       )
+    },
+    test("refuses a write without a known API key with 401 and a JSON error, before anything is published") {
+      val post    = Request.post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody))
+      val resolve = Request.post(URL(Path.decode(s"/api/v1/events/$fixedId/resolve")), Body.empty)
+      for
+        none     <- callKeyed(post)
+        wrong    <- callKeyed(post.addHeader("Authorization", "Bearer not-a-key"))
+        basic    <- callKeyed(post.addHeader("Authorization", "Basic YWxpY2U6c2VjcmV0"))
+        unkeyed  <- callKeyed(resolve)
+        accepted <- callKeyed(post.addHeader("Authorization", s"Bearer $AliceKey"))
+        lower    <- callKeyed(resolve.addHeader("Authorization", s"bearer $BobKey"))
+        read     <- callKeyed(get("/api/v1/events/recent"))
+      yield assertTrue(
+        none._1 == Status.Unauthorized,
+        none._2 == """{"error":"an API key is required: send Authorization: Bearer <key>"}""",
+        none._3.exists(_.startsWith("Bearer")),
+        wrong._1 == Status.Unauthorized,
+        wrong._2 == """{"error":"unknown API key"}""",
+        basic._1 == Status.Unauthorized,
+        unkeyed._1 == Status.Unauthorized,
+        accepted._1 == Status.Accepted,
+        lower._1 == Status.Accepted,
+        // Reads need no key
+        read._1 == Status.Ok,
+      )
+    },
+    test("checks a key that is sent even when keys are not required") {
+      call(
+        Request
+          .post(URL(Path.decode("/api/v1/events")), Body.fromString(validBody))
+          .addHeader("Authorization", "Bearer not-a-key")
+      ).map((s, b) => assertTrue(s == Status.Unauthorized, b == """{"error":"unknown API key"}"""))
     },
     test("accepts a request to resolve an open event with 202") {
       call(Request.post(URL(Path.decode(s"/api/v1/events/$fixedId/resolve")), Body.empty)).map((s, b) =>
@@ -267,7 +330,7 @@ object GateRoutesSpec extends ZIOSpecDefault:
           feed   <- LiveFeed.fromSource(ZStream.fromQueue(source))
           calls  <- Ref.make(List.empty[(GeoPoint, Double, Int)])
           res    <- GateRoutes
-                      .api(StubIngestion, StubResolution, StubQuery(calls), feed, RateLimiter.unlimited)
+                      .api(StubIngestion, StubResolution, StubQuery(calls), feed, ApiKeys.open, RateLimiter.unlimited)
                       .runZIO(get("/api/v1/events/live?bbox=30,50,31,51"))
           seen   <- Ref.make("")
           reader <- res.body.asStream.via(ZPipeline.utf8Decode).runForeach(s => seen.update(_ + s)).fork
@@ -294,7 +357,15 @@ object GateRoutesSpec extends ZIOSpecDefault:
         for
           calls   <- ZIO.service[Ref[List[(GeoPoint, Double, Int)]]]
           tracing <- ZIO.service[Tracing]
-          res     <- GateRoutes(StubIngestion, StubResolution, StubQuery(calls), NoFeed, RateLimiter.unlimited, tracing)
+          res     <- GateRoutes(
+                       StubIngestion,
+                       StubResolution,
+                       StubQuery(calls),
+                       NoFeed,
+                       ApiKeys.open,
+                       RateLimiter.unlimited,
+                       tracing,
+                     )
                        .runZIO(get("/map"))
           body    <- res.body.asString.orDie
         yield assertTrue(

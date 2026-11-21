@@ -11,6 +11,7 @@ object GateMetrics:
     Metric.histogram("mep_http_server_duration_ms", MetricKeyType.Histogram.Boundaries.exponential(1, 2, 14))
   private val ingested = Metric.counter("mep_events_ingested")
   private val limits   = Metric.counter("mep_rate_limit_decisions")
+  private val auths    = Metric.counter("mep_auth_decisions")
 
   // Connected live map clients
   val liveSubscribers: Metric.Gauge[Double] = Metric.gauge("mep_live_subscribers")
@@ -33,3 +34,8 @@ object GateMetrics:
   // `result`: allowed, limited, or unavailable (Redis failed and the request was let through)
   def rateLimit(result: String): UIO[Unit] =
     limits.tagged(MetricLabel("result", result)).increment
+
+  // `result`: granted (a known key), open (no key sent, none required), or denied. Never the client's name: keys can be
+  // added at any time, and a label value per client would grow without bound
+  def auth(result: String): UIO[Unit] =
+    auths.tagged(MetricLabel("result", result)).increment

@@ -21,6 +21,7 @@ spec:
           envFrom: [{configMapRef: {name: {{ $env }}-env}}]
           env:
             - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ include "mep.secretName" . }}, key: POSTGRES_PASSWORD}}}
+            - {name: GATE_API_KEYS, valueFrom: {secretKeyRef: {name: {{ include "mep.gateKeysSecret" . }}, key: GATE_API_KEYS}}}
             - {name: JAVA_OPTS, value: {{ .Values.gate.javaOpts | quote }}}
           ports: [{name: http, containerPort: {{ .Values.gate.port }}}]
           readinessProbe: {httpGet: {path: /api/v1/health, port: http}, periodSeconds: 5}

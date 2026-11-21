@@ -53,3 +53,5 @@ object ApiError:
   final case class Conflict(error: String)        extends ApiError derives JsonCodec, Schema
   // Sent with a Retry-After header
   final case class TooManyRequests(error: String) extends ApiError derives JsonCodec, Schema
+  // Sent with a WWW-Authenticate header
+  final case class Unauthorized(error: String)    extends ApiError derives JsonCodec, Schema
