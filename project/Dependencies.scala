@@ -2,27 +2,28 @@ import sbt.*
 
 // Single source of versions for the sbt build — keep build.mill in sync
 object Versions {
-  val scala      = "3.10.1"
-  val scalaSpark = "3.7.4" // scala-steward:off — last Scala 3 on the 2.13 stdlib that Spark 4.x links against
-  val zio        = "2.1.27"
-  val zioConfig  = "4.1.2"
-  val zioKafka   = "4.2.0"
-  val zioHttp    = "3.11.6"
-  val zioRedis   = "1.3.2"
-  val zioJson    = "1.1.2"
-  val zioSchema  = "1.9.1"
-  val zioOtel    = "3.1.21"
-  val otel       = "1.68.0"
-  val zioLogging = "2.5.4"
-  val quill      = "4.8.6"
-  val postgres   = "42.7.14"
-  val hikari     = "7.1.0"
-  val flyway     = "13.12.2"
-  val logback    = "1.6.7"
-  val chimney    = "2.1.1"
-  val spark      = "4.3.0"
-  val testcont   = "2.0.5"
-  val gatling    = "3.16.1"
+  val scala        = "3.10.1"
+  val scalaSpark   = "3.7.4" // scala-steward:off — last Scala 3 on the 2.13 stdlib that Spark 4.x links against
+  val zio          = "2.1.27"
+  val zioConfig    = "4.1.2"
+  val zioKafka     = "4.2.0"
+  val zioHttp      = "3.11.6"
+  val zioRedis     = "1.3.2"
+  val zioJson      = "1.1.2"
+  val zioSchema    = "1.9.1"
+  val zioOtel      = "3.1.21"
+  val otel         = "1.68.0"
+  val zioLogging   = "2.5.4"
+  val quill        = "4.8.6"
+  val postgres     = "42.7.14"
+  val hikari       = "7.1.0"
+  val flyway       = "13.12.2"
+  val logback      = "1.6.7"
+  val chimney      = "2.1.1"
+  val spark        = "4.3.0"
+  val testcont     = "2.0.5"
+  val gatling      = "3.16.1"
+  val bouncycastle = "1.87"
 }
 
 object Dependencies {
@@ -45,6 +46,13 @@ object Dependencies {
 
   val zioKafka            = "dev.zio" %% "zio-kafka"             % Versions.zioKafka
   val zioHttp             = "dev.zio" %% "zio-http"              % Versions.zioHttp
+  // zio-http depends on netty-pkitesting at compile scope, which brings BouncyCastle into the gate; 1.84 has a critical
+  // vulnerability (GHSA-9pwp-9qqc-pr26), so the gate asks for a fixed release itself
+  val bouncyCastle        = Seq(
+    "org.bouncycastle" % "bcprov-jdk18on" % Versions.bouncycastle,
+    "org.bouncycastle" % "bcpkix-jdk18on" % Versions.bouncycastle,
+    "org.bouncycastle" % "bcutil-jdk18on" % Versions.bouncycastle,
+  )
   val zioRedis            = "dev.zio" %% "zio-redis"             % Versions.zioRedis
   val zioJson             = "dev.zio" %% "zio-json"              % Versions.zioJson
   val zioSchema           = "dev.zio" %% "zio-schema"            % Versions.zioSchema
@@ -121,7 +129,7 @@ object Dependencies {
       telemetry ++
       zioTest
 
-  val gateDeps: Seq[ModuleID] = Seq(zioHttp) ++ zioTest
+  val gateDeps: Seq[ModuleID] = Seq(zioHttp) ++ bouncyCastle ++ zioTest
   val pipeDeps: Seq[ModuleID] = zioTest
   val itDeps: Seq[ModuleID]   = zioTest ++ testcontainers
   // Gatling is built on the Scala 2.13 library; its Java DSL is used from Scala 3
