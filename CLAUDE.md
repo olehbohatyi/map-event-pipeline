@@ -90,9 +90,9 @@ docker compose up -d --build          # full stack (cp .env.example .env first)
   Clients need `MEP_API_KEY` (load test, `k8s-smoke.sh`); compose's local key is in `.env.example`, CI's in `ci.yml`.
   Route tests use `ApiKeys.open`, or `GateRoutesSpec.keys` to test the guard.
 - Gate idempotency keys (`mep:gate:idem:*`), rate limit counters (`mep:gate:rate:*`) and pipe processed ids
-  (`mep:pipe:processed:*`) must stay in separate Redis keyspaces. The rate limit (`GateRoutes.limited`, POST events
-  only) counts and sets the expiry in one Lua script and lets requests through if Redis fails; the load test turns it
-  off (`GATE_RATE_LIMIT_REQUESTS=0`) because all its traffic comes from one address.
+  (`mep:pipe:processed:*`) must stay in separate Redis keyspaces. The rate limit (`GateRoutes.guarded`, both POSTs on
+  one counter per client) counts and sets the expiry in one Lua script and lets requests through if Redis fails; the
+  load test turns it off (`GATE_RATE_LIMIT_REQUESTS=0`) because all its traffic comes from one API key.
 - The pipe commits Kafka offsets only after an event is handled; persistent failures stop the stream instead of
   skipping, malformed records go to the `map.events.dlq` dead-letter topic (`RecordHandler`) before their offset is
   committed. Keep inserts idempotent (`onConflictIgnore`).
