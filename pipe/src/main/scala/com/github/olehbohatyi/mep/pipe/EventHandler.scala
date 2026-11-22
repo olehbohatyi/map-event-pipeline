@@ -53,6 +53,8 @@ object EventHandler:
 
     // Publish even if the row already existed: a previous attempt may have
     // crashed between insert and publish. Consumers dedup by event id.
+    // Both records are sent at once, so the event waits for one acknowledgement rather than two in a row; if either
+    // fails, the event is not marked processed and both are sent again.
     private def publish(event: MapEvent): Task[Outcome] =
       val topic = escalation.topicFor(event)
-      producer.publish(kafka.topics.enriched, event) *> producer.publish(topic, event).as(Outcome.Processed(topic))
+      (producer.publish(kafka.topics.enriched, event) <&> producer.publish(topic, event)).as(Outcome.Processed(topic))

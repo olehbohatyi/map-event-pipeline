@@ -17,5 +17,16 @@ object ProducerSettingsSpec extends ZIOSpecDefault:
         // Kafka refuses delivery.timeout.ms < linger.ms + request.timeout.ms
         props("request.timeout.ms").toString.toLong + props.get("linger.ms").fold(0L)(_.toString.toLong) <= 10000L,
       )
-    }
+    },
+    // Every publish is awaited, so Kafka 4's default linger (5 ms) delayed each one by about 7 ms
+    test("sends each record without holding it back for a batch, unless a linger is configured") {
+      val default                                       = ProducerService.settings(TestKafka.config()).properties
+      val lingers                                       = ProducerService.settings(TestKafka.config().copy(linger = 2.seconds)).properties
+      def long(props: Map[String, AnyRef], key: String) = props(key).toString.toLong
+      assertTrue(
+        long(default, "linger.ms") == 0L,
+        long(lingers, "linger.ms") == 2000L,
+        long(lingers, "linger.ms") + long(lingers, "request.timeout.ms") <= long(lingers, "delivery.timeout.ms"),
+      )
+    },
   )
