@@ -22,7 +22,7 @@ object AppConfigSpec extends ZIOSpecDefault:
         cfg.postgres.maxPool == 10,
         // A broker or Postgres that stops answering fails a call within these instead of hanging it
         cfg.kafka.deliveryTimeout == 10.seconds,
-        cfg.kafka.linger == Duration.Zero,
+        cfg.kafka.linger == 5.millis,
         cfg.postgres.connectTimeout == 5.seconds,
         cfg.postgres.socketTimeout == 30.seconds,
         cfg.kafka.topics.status == "map.events.status",
