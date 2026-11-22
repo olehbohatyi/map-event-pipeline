@@ -19,7 +19,7 @@ processor go to Grafana over OpenTelemetry; one trace follows an event from the 
 |---|---|
 | **Stack** | Scala 3, ZIO 2, zio-http, zio-kafka, Quill, Kafka / Redpanda, PostgreSQL + PostGIS, Redis, Spark 4, OpenTelemetry (Tempo, Prometheus, Loki, Grafana), Gatling, Docker, Helm |
 | **Performance** | CI baseline load test: 4,730 requests, 0 failed; `POST /api/v1/events` p95 18 ms; event posted → stored in Postgres p95 294 ms ([load testing](#load-testing-gatling)) |
-| **Tests** | 157 tests, 34 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
+| **Tests** | 159 tests, 34 of them against real Postgres, Redis and Kafka (Testcontainers), including frozen ones; a golden OpenAPI file; CI builds with sbt and mill, builds the images and installs the Helm chart on kind |
 | **Process** | 26 pull requests, each green in CI before merge; every phase began with a spike whose findings are in [docs/decisions.md](docs/decisions.md) |
 
 ## Highlights
@@ -352,6 +352,20 @@ The same profile on a laptop (Docker Desktop, 4 CPUs, 3.8 GiB) is what found the
 - On the laptop the gate's producer also waited longer for Kafka's acknowledgement than the pipe's (p50 59 ms vs
   8 ms), and the baseline's limits (POST p95 < 500 ms, end to end < 3 s) failed. That was the Docker VM (swapping,
   GC pauses of about a second): on a CI runner the same code meets both limits with a wide margin, as above.
+
+Producer tuning (stress profile: 200 ingests/s, 60 queries/s, 25 live clients, 90 s, in CI, 2026-11-22). Every publish
+is awaited, so a lone record waits out the producer's linger (`KAFKA_LINGER`, Kafka 4's default of 5 ms): against an
+idle broker a publish took about 4 ms with none and 8–12 ms with 5 ms. Under load it is the other way round:
+
+| | `main` (two runs) | linger 0 | linger 5 ms (kept) |
+|---|---|---|---|
+| `POST /api/v1/events` p95 | 18 / 26 ms | 390 ms | 20 ms |
+| ingest → stored p95 | 35 / 117 ms | 1,534 ms | 46 ms |
+
+With no linger every record became a request of its own, and the broker, sharing the runner with the stack, fell
+behind. The pipe now sends an event's two records (enriched and its type's topic) at once and waits for one
+acknowledgement, not two in a row; at these rates that is within the runs' noise. Compression (lz4) gained nothing on
+records of about 350 bytes.
 
 ### Hourly trends (Spark Structured Streaming)
 

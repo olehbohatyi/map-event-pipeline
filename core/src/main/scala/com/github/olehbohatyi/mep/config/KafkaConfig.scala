@@ -36,10 +36,10 @@ final case class TopicSettings(
 /** `deliveryTimeout` bounds a publish: how long the producer waits for the broker before the send fails. Kafka's
   * default (2 minutes, after up to 1 minute blocked on metadata) outlasted any client waiting for the gate.
   *
-  * `linger` is how long the producer holds a record back to batch it with others. Every publish here is awaited (the
-  * gate answers its client after the ack, the pipe commits after it), so a lone record waits out the whole linger:
-  * Kafka 4's default of 5 ms cost about 7 ms per publish against the compose broker, with no throughput gained under 50
-  * concurrent senders. Records still batch while requests are in flight.
+  * `linger` is how long the producer holds a record back to batch it with others; Kafka 4's default, 5 ms, is kept.
+  * Every publish here is awaited, so a lone record waits out the linger: with 0, one publish to an idle compose broker
+  * took about 4 ms instead of 8–12. But under load every record became a request of its own, and in CI the stress
+  * profile's POST p95 rose from 18–26 ms to 390 ms (ingest to stored from 35–117 ms to 1.5 s).
   */
 final case class KafkaConfig(
     bootstrapServers: String,
@@ -47,6 +47,6 @@ final case class KafkaConfig(
     topics: TopicsConfig,
     topicSettings: TopicSettings,
     deliveryTimeout: zio.Duration = zio.Duration.fromSeconds(10),
-    linger: zio.Duration = zio.Duration.Zero,
+    linger: zio.Duration = zio.Duration.fromMillis(5),
   ):
   def servers: List[String] = bootstrapServers.split(',').map(_.trim).filter(_.nonEmpty).toList
