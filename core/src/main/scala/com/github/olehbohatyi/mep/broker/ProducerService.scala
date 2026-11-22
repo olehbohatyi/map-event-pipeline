@@ -32,13 +32,15 @@ object ProducerService:
       yield ProducerServiceLive(producer, tracing)
     }
 
-  // A send fails after deliveryTimeout, blocked on metadata or waiting for acks; Kafka requires the request timeout to
-  // fit in it (delivery.timeout.ms >= linger.ms + request.timeout.ms)
+  // A send fails after deliveryTimeout, blocked on metadata or waiting for acks; Kafka requires the linger and the
+  // request timeout to fit in it (delivery.timeout.ms >= linger.ms + request.timeout.ms)
   private[broker] def settings(cfg: KafkaConfig): ProducerSettings =
     val delivery = cfg.deliveryTimeout.toMillis
+    val linger   = cfg.linger.toMillis
     ProducerSettings(cfg.servers)
       .withProperty("delivery.timeout.ms", delivery.toString)
-      .withProperty("request.timeout.ms", (delivery / 2).toString)
+      .withProperty("linger.ms", linger.toString)
+      .withProperty("request.timeout.ms", ((delivery - linger) / 2).max(1).toString)
       .withProperty("max.block.ms", delivery.toString)
 
   final private class ProducerServiceLive(producer: Producer, tracing: Tracing) extends ProducerService:

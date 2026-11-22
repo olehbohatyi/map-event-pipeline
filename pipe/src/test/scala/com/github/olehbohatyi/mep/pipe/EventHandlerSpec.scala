@@ -1,8 +1,10 @@
 package com.github.olehbohatyi.mep.pipe
 
 import zio.*
+import zio.concurrent.CountdownLatch
 import zio.test.*
 
+import com.github.olehbohatyi.mep.broker.ProducerService
 import com.github.olehbohatyi.mep.config.KafkaConfig
 import com.github.olehbohatyi.mep.domain.*
 import com.github.olehbohatyi.mep.geo.RegionResolver
@@ -23,6 +25,14 @@ object EventHandlerSpec extends ZIOSpecDefault:
       def escalate(event: MapEvent): Task[MapEvent] = ZIO.succeed(event)
   )
 
+  // Each publish returns only once both have started: sent one after the other, the first never returns
+  val meeting: ULayer[ProducerService] = ZLayer.fromZIO(CountdownLatch.make(2).map { latch =>
+    new ProducerService:
+      def publish(topic: String, event: MapEvent): Task[Unit]                                                     = latch.countDown *> latch.await
+      def publishRaw(topic: String, key: Option[String], value: String, headers: Map[String, String]): Task[Unit] =
+        ZIO.unit
+  })
+
   def spec = suite("EventHandler")(
     test("enriches, stores and publishes to enriched + typed topic") {
       val event = Samples.event(eventType = EventType.Traffic)
@@ -36,7 +46,8 @@ object EventHandlerSpec extends ZIOSpecDefault:
       yield assertTrue(
         outcome == Outcome.Processed("traffic"),
         stored.exists(e => e.status == EventStatus.Enriched && e.region.contains("zone_50_30")),
-        sent.map(_._1) == Chunk("enriched", "traffic"),
+        sent.map(_._1).toSet == Set("enriched", "traffic"),
+        sent.size == 2,
         sent.forall(_._2.status == EventStatus.Enriched),
       )
     },
@@ -100,6 +111,27 @@ object EventHandlerSpec extends ZIOSpecDefault:
         sent     <- producer.all
         stored   <- repo.findById(event.id)
       yield assertTrue(outcome == Outcome.Duplicate, sent.isEmpty, stored.exists(_.status == EventStatus.Resolved))
+    },
+    // Two acknowledgements in a row cost twice one; the pipe handles a partition's events one at a time
+    test("sends the enriched and typed records at once, waiting for one acknowledgement instead of two in a row") {
+      ZIO
+        .serviceWithZIO[EventHandler](_.handle(Samples.event(eventType = EventType.Sign)))
+        .provide(
+          TestTelemetry.tracing,
+          ZLayer.succeed(kafka),
+          InMemoryEventRepo.layer,
+          meeting,
+          InMemoryIdempotencyCache.layer,
+          InMemoryGeoCache.layer,
+          InMemoryRegionRepo.layer(Samples.LvivOblast),
+          RegionResolver.live,
+          DeduplicationService.live,
+          EnrichmentService.live,
+          routingOnly,
+          EventHandler.live,
+        )
+        .raceFirst(Live.live(ZIO.sleep(5.seconds)) *> ZIO.fail(RuntimeException("the second publish never started")))
+        .map(outcome => assertTrue(outcome == Outcome.Processed("signs")))
     },
   ).provide(
     TestTelemetry.tracing,
