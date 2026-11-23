@@ -15,7 +15,7 @@ object Versions {
   val otel         = "1.68.0"
   val zioLogging   = "2.5.4"
   val quill        = "4.8.6"
-  val postgres     = "42.7.14"
+  val postgres     = "42.7.15"
   val hikari       = "7.1.0"
   val flyway       = "13.13.0"
   val logback      = "1.6.8"
