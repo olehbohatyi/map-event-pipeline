@@ -13,7 +13,7 @@ object Versions {
   val zioSchema    = "1.9.1"
   val zioOtel      = "3.1.21"
   val otel         = "1.68.0"
-  val zioLogging   = "2.5.4"
+  val zioLogging   = "2.5.5"
   val quill        = "4.8.6"
   val postgres     = "42.7.14"
   val hikari       = "7.1.0"
