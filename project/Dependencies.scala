@@ -9,7 +9,7 @@ object Versions {
   val zioKafka     = "4.2.0"
   val zioHttp      = "3.12.0"
   val zioRedis     = "1.3.2"
-  val zioJson      = "1.1.2"
+  val zioJson      = "1.1.3"
   val zioSchema    = "1.9.1"
   val zioOtel      = "3.1.21"
   val otel         = "1.68.0"
